@@ -1,0 +1,21 @@
+{
+  "theme": "dark",
+  "layout": {
+    "main_splitter": [
+      309,
+      870,
+      335
+    ],
+    "left_splitter": [
+      474,
+      347
+    ],
+    "window": [
+      0,
+      23,
+      1920,
+      1009
+    ]
+  },
+  "detail_expanded": true
+}
