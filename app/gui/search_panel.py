@@ -4,7 +4,6 @@
 """
 from __future__ import annotations
 
-import json
 import threading
 from pathlib import Path
 
@@ -18,7 +17,7 @@ from app.engine.index_engine import SearchIndex
 from app.engine.search_engine import (
     SearchHit, SearchMode, SearchOptions, SearchStats, search,
 )
-from app.paths import INDEX_DB, CONFIG_DIR
+from app.paths import INDEX_DB
 
 INDEX_MAX_AGE_SEC = 10 * 60  # これより古いインデックスは自動再構築
 
@@ -87,12 +86,18 @@ class SearchPanel(QWidget):
 
     file_selected = Signal(str)  # ファイルを選択（親フォルダへ navigate して select）
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, settings=None) -> None:
         super().__init__(parent)
         self._worker: SearchWorker | None = None
         self._root = str(Path.home())
+        # settings は ThemeManager 互換オブジェクト（get/set）。
+        # 共有することで settings.json の単一ライターを保証する。
+        self._settings = settings
         self._build_ui()
-        self._load_options()  # 保存されたオプションを復元
+        self._load_options()  # 保存されたオプションを復元（signal 接続前）
+        # 復元後に signal 接続 → 以降のユーザー変更だけが保存される
+        for check in (self.wildcard_check, self.recursive_check, self.index_check):
+            check.stateChanged.connect(self.save_options)
         # インクリメンタル検索（ファイル名モードのみ、デバウンス400ms）
         self._debounce = QTimer(self, singleShot=True, interval=400)
         self._debounce.timeout.connect(self._incremental_search)
@@ -141,12 +146,13 @@ class SearchPanel(QWidget):
         self.wildcard_check.setToolTip(
             "ファイル名を *.md / file_*.txt などのパターンで照合")
         self.recursive_check = QCheckBox("サブフォルダーも検索")
-        self.recursive_check.setChecked(True)
         self.index_check = QCheckBox("高速インデックス")
         self.index_check.setToolTip(
             "ファイル名検索を SQLite FTS5 インデックスで高速化。\n"
             "初回と10分経過後は自動で再構築します。\n"
             "（ファイル名モードのみ・ワイルドカード/サブフォルダOFFとは併用不可）")
+        # デフォルト値。signal 接続は _load_options() の後（__init__）で行う。
+        self.recursive_check.setChecked(True)
         opts_row.addWidget(self.wildcard_check)
         opts_row.addWidget(self.recursive_check)
         opts_row.addWidget(self.index_check)
@@ -254,36 +260,24 @@ class SearchPanel(QWidget):
             self.file_selected.emit(path)
 
     def _load_options(self) -> None:
-        """settings.json から検索オプションを復元。"""
-        try:
-            settings_file = CONFIG_DIR / "settings.json"
-            if settings_file.exists():
-                settings = json.loads(settings_file.read_text(encoding="utf-8"))
-                search_opts = settings.get("search_options", {})
-                self.wildcard_check.setChecked(search_opts.get("wildcard", False))
-                self.recursive_check.setChecked(search_opts.get("recursive", True))
-                self.index_check.setChecked(search_opts.get("use_index", False))
-        except Exception:
-            pass  # 読み込み失敗時はデフォルト値を使用
+        """共有 settings から検索オプションを復元。"""
+        if self._settings is None:
+            return
+        search_opts = self._settings.get("search_options", {}) or {}
+        self.wildcard_check.setChecked(search_opts.get("wildcard", False))
+        self.recursive_check.setChecked(search_opts.get("recursive", True))
+        self.index_check.setChecked(search_opts.get("use_index", False))
 
     def save_options(self) -> None:
-        """検索オプションを settings.json に保存。"""
-        try:
-            settings_file = CONFIG_DIR / "settings.json"
-            settings = {}
-            if settings_file.exists():
-                settings = json.loads(settings_file.read_text(encoding="utf-8"))
-            settings["search_options"] = {
-                "wildcard": self.wildcard_check.isChecked(),
-                "recursive": self.recursive_check.isChecked(),
-                "use_index": self.index_check.isChecked(),
-            }
-            settings_file.write_text(json.dumps(settings, ensure_ascii=False, indent=2),
-                                     encoding="utf-8")
-        except Exception:
-            pass  # 保存失敗時は無視
+        """検索オプションを共有 settings に保存（単一ライター）。"""
+        if self._settings is None:
+            return
+        self._settings.set("search_options", {
+            "wildcard": self.wildcard_check.isChecked(),
+            "recursive": self.recursive_check.isChecked(),
+            "use_index": self.index_check.isChecked(),
+        })
 
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt API
-        self.save_options()
         self.cancel_search()
         super().closeEvent(event)

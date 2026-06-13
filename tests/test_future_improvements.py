@@ -83,10 +83,11 @@ class TestFavoritesReorder:
         store.add("B", str(tmp_path))
         store.add("C", str(tmp_path))
         sidebar = FavoritesSidebar(store)
-        # 行0を末尾へ移動（InternalMove 相当の操作をモデル経由で実行）
-        item = sidebar.list.takeItem(0)
-        sidebar.list.addItem(item)
-        sidebar._on_rows_moved()
+        # トップ階層の item を A,C,B の順に並べ替えて構造を永続化
+        tree = sidebar.tree
+        item_a = tree.takeTopLevelItem(0)
+        tree.addTopLevelItem(item_a)  # A を末尾へ → B, C, A
+        sidebar._persist_structure()
         assert [f.label for f in store.favorites] == ["B", "C", "A"]
         # 再読み込みでも順序維持
         assert [f.label for f in FavoriteStore(tmp_path / "f.json").favorites] \
@@ -94,9 +95,9 @@ class TestFavoritesReorder:
 
     def test_drag_mode_enabled(self, qapp, tmp_path):
         sidebar = FavoritesSidebar(FavoriteStore(tmp_path / "f.json"))
-        from PySide6.QtWidgets import QListWidget
-        assert sidebar.list.dragDropMode() == \
-            QListWidget.DragDropMode.InternalMove
+        from PySide6.QtWidgets import QTreeWidget
+        assert sidebar.tree.dragDropMode() == \
+            QTreeWidget.DragDropMode.InternalMove
 
 
 class TestLayoutPersistence:

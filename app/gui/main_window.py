@@ -16,7 +16,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QDockWidget, QFileSystemModel, QHBoxLayout, QInputDialog,
-    QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton,
+    QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
     QSplitter, QStackedLayout, QStatusBar, QStyle, QToolBar, QToolButton,
     QTreeView, QVBoxLayout, QWidget, QTableView,
 )
@@ -97,6 +97,10 @@ class BreadcrumbBar(QWidget):
         self._edit.setFocus()
         self._edit.selectAll()
 
+    def focus_path_edit(self) -> None:
+        """パス直接入力欄にフォーカス（F4 から呼び出し）。"""
+        self._show_edit()
+
     def _show_crumbs(self) -> None:
         self._stack.setCurrentWidget(self._crumb_widget)
 
@@ -167,11 +171,6 @@ class MainWindow(QMainWindow):
         # 初期ディレクトリ設定を復元（設定がなければホームに）
         initial = self.theme_manager.get("initial_dir", str(Path.home()))
         self.navigate(initial if Path(initial).is_dir() else str(Path.home()))
-        # 詳細パネル折りたたみ状態を復元
-        self._detail_expanded = self.theme_manager.get("detail_expanded", False)
-        if self._detail_expanded:
-            self.detail.setVisible(True)
-            self.detail_toggle.setArrowType(Qt.ArrowType.DownArrow)
 
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("メイン")
@@ -277,25 +276,6 @@ class MainWindow(QMainWindow):
         self.table.customContextMenuRequested.connect(self._show_context_menu)
         self.table.horizontalHeader().resizeSection(0, 280)
 
-        # 詳細パネル（折りたたみ可能、既定は折りたたみ）
-        self.detail_container = QWidget()
-        detail_layout = QVBoxLayout(self.detail_container)
-        detail_layout.setContentsMargins(0, 0, 0, 0)
-        self.detail_toggle = QToolButton()
-        self.detail_toggle.setArrowType(Qt.ArrowType.RightArrow)
-        self.detail_toggle.setText("詳細")
-        self.detail_toggle.setToolButtonStyle(
-            Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.detail_toggle.clicked.connect(self._toggle_detail_panel)
-        self.detail = QLabel("ファイルを選択すると詳細を表示")
-        self.detail.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self.detail.setWordWrap(True)
-        self.detail.setMargin(8)
-        self.detail.setVisible(False)
-        detail_layout.addWidget(self.detail_toggle)
-        detail_layout.addWidget(self.detail, stretch=1)
-        self._detail_expanded = False
-
         # 左ペイン: お気に入い（上）+ フォルダツリー（下）
         self.favorites = FavoritesSidebar(self.favorite_store)
         self.favorites.path_selected.connect(self.navigate)
@@ -306,15 +286,15 @@ class MainWindow(QMainWindow):
 
         splitter.addWidget(left)
         splitter.addWidget(self.table)
-        splitter.addWidget(self.detail_container)
-        splitter.setSizes([220, 620, 240])
+        splitter.setSizes([220, 860])
         root.addWidget(splitter, stretch=1)
         self._main_splitter = splitter
         self._left_splitter = left
         self._restore_layout()
 
         # 検索ドック（Ctrl+F でトグル）
-        self.search_panel = SearchPanel()
+        # settings は ThemeManager を共有（単一ライターにして上書き消失を防ぐ）
+        self.search_panel = SearchPanel(settings=self.theme_manager)
         self.search_panel.file_selected.connect(self._on_search_file_selected)
         self.search_dock = QDockWidget("検索", self)
         self.search_dock.setWidget(self.search_panel)
@@ -322,16 +302,10 @@ class MainWindow(QMainWindow):
                            self.search_dock)
         self.search_dock.hide()
 
-        # 下部: ステータス + 主要操作
+        # 下部: ステータス
         bottom = QHBoxLayout()
         self.selection_label = QLabel("選択: 0件")
-        self.rename_btn = QPushButton("一括リネーム (Ctrl+H)")
-        self.undo_btn = QPushButton("Undo (Ctrl+Z)")
-        self.rename_btn.clicked.connect(self.open_rename_dialog)
-        self.undo_btn.clicked.connect(self.undo_last)
         bottom.addWidget(self.selection_label, stretch=1)
-        bottom.addWidget(self.rename_btn)
-        bottom.addWidget(self.undo_btn)
         root.addLayout(bottom)
 
         self.setCentralWidget(central)
@@ -355,6 +329,8 @@ class MainWindow(QMainWindow):
         add("上へ", "Alt+Up", self.go_up)
         add("戻る", "Alt+Left", self.go_back)
         add("単一リネーム", "F2", self.rename_single)
+        add("フィルタへ", "F3", self._focus_filter)
+        add("パス入力へ", "F4", self.breadcrumb.focus_path_edit)
         add("更新", "F5", self.refresh)
 
         # メニューバー：ファイル・設定
@@ -376,6 +352,11 @@ class MainWindow(QMainWindow):
             self.navigate(path)
             self.statusBar().showMessage(
                 f"初期ディレクトリを設定しました", 3000)
+
+    def _focus_filter(self) -> None:
+        """簡易フィルタリングボックスにフォーカス（F3 から呼び出し）。"""
+        self.filter_edit.setFocus()
+        self.filter_edit.selectAll()
 
     # ---- ナビゲーション ----
     @property
@@ -477,39 +458,6 @@ class MainWindow(QMainWindow):
         if total:
             text += f" / {_human_size(total)}"
         self.selection_label.setText(text)
-        if len(paths) == 1:
-            self._show_detail(paths[0])
-        elif not paths:
-            self.detail.setText("ファイルを選択すると詳細を表示")
-
-    def _toggle_detail_panel(self) -> None:
-        """詳細パネル の折りたたみ切替。"""
-        self._detail_expanded = not self._detail_expanded
-        self.detail.setVisible(self._detail_expanded)
-        self.detail_toggle.setArrowType(
-            Qt.ArrowType.DownArrow if self._detail_expanded
-            else Qt.ArrowType.RightArrow)
-        self.theme_manager.set(
-            "detail_expanded", self._detail_expanded)
-
-    def _show_detail(self, path: str) -> None:
-        p = Path(path)
-        try:
-            st = p.stat()
-            from datetime import datetime
-            lines = [
-                f"<b>{p.name}</b>", "",
-                f"種類: {'フォルダ' if p.is_dir() else (p.suffix or 'ファイル')}",
-                f"サイズ: {'-' if p.is_dir() else _human_size(st.st_size)}",
-                f"更新: {datetime.fromtimestamp(st.st_mtime):%Y-%m-%d %H:%M}",
-            ]
-            self.detail.setText("<br>".join(lines))
-            if not self._detail_expanded:
-                self._toggle_detail_panel()  # 詳細がある場合は自動展開
-        except OSError:
-            self.detail.setText(p.name)
-            if not self._detail_expanded:
-                self._toggle_detail_panel()
 
     # ---- コンテキストメニュー ----
     def _show_context_menu(self, pos) -> None:

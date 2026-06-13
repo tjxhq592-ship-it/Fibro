@@ -2,13 +2,12 @@
   "theme": "dark",
   "layout": {
     "main_splitter": [
-      309,
-      870,
-      335
+      167,
+      469
     ],
     "left_splitter": [
-      474,
-      347
+      275,
+      201
     ],
     "window": [
       0,
@@ -17,5 +16,10 @@
       1009
     ]
   },
-  "detail_expanded": true
+  "detail_expanded": true,
+  "search_options": {
+    "wildcard": true,
+    "recursive": true,
+    "use_index": false
+  }
 }
