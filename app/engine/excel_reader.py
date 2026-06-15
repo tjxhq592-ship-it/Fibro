@@ -11,9 +11,32 @@ import zipfile
 from collections.abc import Iterator
 from pathlib import Path
 
-import openpyxl
-import xlrd
-from openpyxl.utils import get_column_letter
+# openpyxl / xlrd は重い（起動時 ~200ms）ため、Excel を実際に検索する時だけ
+# 遅延ロードする（起動・Win+E の体感を速くする）。
+_openpyxl = None
+_xlrd = None
+_get_col = None
+
+
+def _load_openpyxl():
+    global _openpyxl, _get_col
+    if _openpyxl is None:
+        import openpyxl
+        from openpyxl.utils import get_column_letter
+        _openpyxl = openpyxl
+        _get_col = get_column_letter
+    return _openpyxl, _get_col
+
+
+def _load_xlrd():
+    global _xlrd, _get_col
+    if _xlrd is None:
+        import xlrd
+        from openpyxl.utils import get_column_letter
+        _xlrd = xlrd
+        _get_col = get_column_letter
+    return _xlrd, _get_col
+
 
 _NUMERIC_RE = re.compile(r"^[\d.,\-+eE]+$")
 _TAG_RE = re.compile(rb"<[^>]+>")
@@ -58,6 +81,7 @@ def search_in_excel(filepath: str | Path, keyword: str,
     needle = keyword if case_sensitive else keyword.lower()
     if not may_contain_keyword(filepath, keyword):
         return
+    openpyxl, get_column_letter = _load_openpyxl()
     try:
         wb = openpyxl.load_workbook(str(filepath), read_only=True,
                                     data_only=True)
@@ -84,6 +108,7 @@ def search_in_excel(filepath: str | Path, keyword: str,
 
 
 def _xls_cell_text(cell) -> str | None:
+    xlrd, _ = _load_xlrd()
     if cell.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):
         return None
     value = cell.value
@@ -97,6 +122,7 @@ def search_in_xls(filepath: str | Path, keyword: str,
                   max_hits: int = 100) -> Iterator[tuple[str, str, str]]:
     """.xls（旧形式）のセル値検索。xlrd 使用。"""
     needle = keyword if case_sensitive else keyword.lower()
+    xlrd, get_column_letter = _load_xlrd()
     try:
         book = xlrd.open_workbook(str(filepath), on_demand=True)
     except Exception:  # 破損・暗号化・非xlsはスキップ

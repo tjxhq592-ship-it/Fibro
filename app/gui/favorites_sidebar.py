@@ -6,7 +6,7 @@ QTreeWidget でグループ（フォルダ）によるネストを表現。
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QRunnable, Qt, QThreadPool, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QInputDialog, QLabel, QMenu, QMessageBox, QTreeWidget, QTreeWidgetItem,
@@ -16,6 +16,25 @@ from PySide6.QtWidgets import (
 from app.models.favorite import FavoriteStore
 
 _ID_ROLE = Qt.ItemDataRole.UserRole
+
+
+class _ReachJob(QRunnable):
+    """お気に入りの到達性をバックグラウンドで確認する。
+
+    切断中のネットワーク/クラウドパスでは is_reachable() が最大2秒ブロックする
+    ため、GUI スレッドではなくここで確認し、結果を emit(gen, id, ok) で返す。
+    """
+
+    def __init__(self, leaves: list[tuple[str, str]], gen: int, emit) -> None:
+        super().__init__()
+        self._leaves = leaves  # (fav_id, path)
+        self._gen = gen
+        self._emit = emit
+
+    def run(self) -> None:
+        from app.netpath import reachable
+        for fid, path in self._leaves:
+            self._emit(self._gen, fid, reachable(path))
 
 
 class _FavTree(QTreeWidget):
@@ -30,10 +49,14 @@ class _FavTree(QTreeWidget):
 
 class FavoritesSidebar(QWidget):
     path_selected = Signal(str)
+    _reach_checked = Signal(int, str, bool)  # gen, fav_id, reachable
 
     def __init__(self, store: FavoriteStore, parent=None) -> None:
         super().__init__(parent)
         self._store = store
+        self._reach_gen = 0                 # 到達性チェックの世代
+        self._items_by_id: dict[str, QTreeWidgetItem] = {}
+        self._reach_checked.connect(self._apply_reachability)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
@@ -63,13 +86,12 @@ class FavoritesSidebar(QWidget):
         return self.tree
 
     def _label_for(self, fav) -> str:
+        # 到達性は同期で見ない（GUI を固めるため）。後から非同期で印を付ける。
         if fav.is_group:
             return f"📁 {fav.label}"
         label = f"⭐ {fav.label}"
         if fav.tags:
             label += f"  [{', '.join(fav.tags)}]"
-        if not fav.is_reachable():
-            label += "  (到達不可)"
         return label
 
     def _make_item(self, fav) -> QTreeWidgetItem:
@@ -79,8 +101,6 @@ class FavoritesSidebar(QWidget):
         if fav.note:
             tooltip += f"\n{fav.note}"
         item.setToolTip(0, tooltip)
-        if not fav.is_group and not fav.is_reachable():
-            item.setForeground(0, QColor("#9e9e9e"))
         # グループはドロップ受け入れ可、葉は不可
         flags = item.flags() | Qt.ItemFlag.ItemIsDragEnabled
         if fav.is_group:
@@ -92,6 +112,8 @@ class FavoritesSidebar(QWidget):
 
     def refresh(self) -> None:
         self.tree.clear()
+        self._reach_gen += 1
+        self._items_by_id = {}
         # parent_id → 親 item のマップを構築しながら、保存順に追加
         items: dict[str, QTreeWidgetItem] = {}
         # 親が先に作られるよう、トポロジカルに数回パスする
@@ -113,8 +135,27 @@ class FavoritesSidebar(QWidget):
                 else:
                     self.tree.addTopLevelItem(item)
                 items[fav.id] = item
+                self._items_by_id[fav.id] = item
             pending = still
         self.tree.expandAll()
+        # 到達性チェックはバックグラウンドで（切断パスでも GUI を固めない）
+        leaves = [(f.id, f.path) for f in self._store.favorites
+                  if not f.is_group and f.path]
+        if leaves:
+            QThreadPool.globalInstance().start(
+                _ReachJob(leaves, self._reach_gen, self._reach_checked.emit))
+
+    def _apply_reachability(self, gen: int, fav_id: str, ok: bool) -> None:
+        """非同期チェック結果を反映。到達不可なら灰色＋(到達不可) を付す。"""
+        if gen != self._reach_gen or ok:
+            return  # 古い結果、または到達可能なら何もしない
+        item = self._items_by_id.get(fav_id)
+        if item is None:
+            return
+        text = item.text(0)
+        if "(到達不可)" not in text:
+            item.setText(0, text + "  (到達不可)")
+        item.setForeground(0, QColor("#9e9e9e"))
 
     # ---- 追加 ----
     def add_favorite(self, path: str) -> None:

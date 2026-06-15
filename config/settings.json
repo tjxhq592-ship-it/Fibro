@@ -1,14 +1,18 @@
 {
-  "theme": "dark",
+  "theme": "light",
   "layout": {
     "main_splitter": [
-      482,
-      1422
+      161,
+      475
     ],
     "left_splitter": [
-      320,
-      252,
-      253
+      144,
+      185,
+      143
+    ],
+    "pane_splitter": [
+      640,
+      0
     ],
     "window": [
       0,
@@ -22,5 +26,11 @@
     "wildcard": true,
     "recursive": true,
     "use_index": false
-  }
+  },
+  "tabs": [
+    "C:\\Users\\hiros\\AppData\\Local\\Temp\\pytest-of-hiros\\pytest-104\\test_navigation_history0"
+  ],
+  "dual_pane": false,
+  "columns": "AAAA/wAAAAAAAAABAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAkQAAAAEAQEBAAAAAAAAAAAAAAAAAGT/////AAAAhAAAAAAAAAAEAAABGAAAAAEAAAAAAAAAZAAAAAEAAAAAAAAAZAAAAAEAAAAAAAAAZAAAAAEAAAAAAAAD6AAAAAAAAAAAAAAAAAAAAAAAAAAAAQ==",
+  "view_mode": "details"
 }

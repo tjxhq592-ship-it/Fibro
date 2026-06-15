@@ -6,10 +6,21 @@
 from __future__ import annotations
 
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from send2trash import send2trash
+from app.longpath import extend
+
+
+def _send2trash(path: str) -> None:
+    """send2trash を遅延 import（起動時 ~65ms を削減）。"""
+    from send2trash import send2trash
+    send2trash(path)
+
+
+# 衝突解決の戻り値: "overwrite" | "skip" | "rename" | "cancel"
+Resolver = Callable[[Path, Path], str]
 
 
 @dataclass
@@ -32,6 +43,31 @@ def _unique_dest(dest: Path) -> Path:
         i += 1
 
 
+def _resolve_dest(dest: Path, resolver: Resolver | None,
+                  src: Path) -> Path | None:
+    """衝突時に解決方針を適用して最終 dest を返す。
+
+    None を返したらスキップ。"cancel" は呼び出し側でループ中断するため
+    番兵 None と区別して例外的に文字列を投げず、戻り値で表現する。
+    """
+    if not dest.exists():
+        return dest
+    action = resolver(src, dest) if resolver else "rename"
+    if action == "skip":
+        return None
+    if action == "cancel":
+        raise _Cancelled
+    if action == "overwrite":
+        # 既存をゴミ箱へ退避してから上書き（誤上書きでも復元可）
+        _send2trash(str(dest))
+        return dest
+    return _unique_dest(dest)  # "rename"（既定）
+
+
+class _Cancelled(Exception):
+    """衝突解決でユーザーが中止を選んだことを表す内部シグナル。"""
+
+
 class FileOps:
     def __init__(self) -> None:
         self._history: list[OpRecord] = []
@@ -40,33 +76,45 @@ class FileOps:
     def can_undo(self) -> bool:
         return any(r.kind in ("move", "copy") for r in self._history)
 
-    def move(self, sources: list[str | Path], dest_dir: str | Path) -> OpRecord:
+    def move(self, sources: list[str | Path], dest_dir: str | Path,
+             resolver: Resolver | None = None) -> OpRecord:
         d = Path(dest_dir)
         record = OpRecord(kind="move")
-        for src in map(Path, sources):
-            dest = _unique_dest(d / src.name)
-            shutil.move(str(src), str(dest))
-            record.pairs.append((str(src), str(dest)))
+        try:
+            for src in map(Path, sources):
+                dest = _resolve_dest(d / src.name, resolver, src)
+                if dest is None:
+                    continue
+                shutil.move(extend(src), extend(dest))
+                record.pairs.append((str(src), str(dest)))
+        except _Cancelled:
+            pass
         self._history.append(record)
         return record
 
-    def copy(self, sources: list[str | Path], dest_dir: str | Path) -> OpRecord:
+    def copy(self, sources: list[str | Path], dest_dir: str | Path,
+             resolver: Resolver | None = None) -> OpRecord:
         d = Path(dest_dir)
         record = OpRecord(kind="copy")
-        for src in map(Path, sources):
-            dest = _unique_dest(d / src.name)
-            if src.is_dir():
-                shutil.copytree(str(src), str(dest))
-            else:
-                shutil.copy2(str(src), str(dest))
-            record.pairs.append((str(src), str(dest)))
+        try:
+            for src in map(Path, sources):
+                dest = _resolve_dest(d / src.name, resolver, src)
+                if dest is None:
+                    continue
+                if src.is_dir():
+                    shutil.copytree(extend(src), extend(dest))
+                else:
+                    shutil.copy2(extend(src), extend(dest))
+                record.pairs.append((str(src), str(dest)))
+        except _Cancelled:
+            pass
         self._history.append(record)
         return record
 
     def delete(self, sources: list[str | Path]) -> OpRecord:
         record = OpRecord(kind="delete")
         for src in map(Path, sources):
-            send2trash(str(src))
+            _send2trash(str(src))
             record.pairs.append((str(src), ""))
         self._history.append(record)
         return record
@@ -77,14 +125,14 @@ class FileOps:
             record = self._history[idx]
             if record.kind == "move":
                 for src, dest in reversed(record.pairs):
-                    shutil.move(dest, src)
+                    shutil.move(extend(dest), extend(src))
                 del self._history[idx]
                 return record
             if record.kind == "copy":
                 for _, dest in reversed(record.pairs):
                     p = Path(dest)
                     if p.is_dir():
-                        shutil.rmtree(dest)
+                        shutil.rmtree(extend(p))
                     elif p.exists():
                         p.unlink()
                 del self._history[idx]

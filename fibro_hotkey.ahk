@@ -19,11 +19,10 @@ TraySetIcon(FibroExe)
 {
     if FileExist(FibroExe)
     {
-        ; 既に起動中ならウィンドウを前面へ、なければ起動
-        if WinExist("ahk_exe Fibro.exe")
-            WinActivate
-        else
-            Run(FibroExe)
+        ; 常に起動を試みる。Fibro 側が単一インスタンス制御するため、
+        ; 既に起動中なら新プロセスは立たず、既存ウィンドウに新規タブが
+        ; 追加され最前面化される（二重起動時はタブ追加＋前面化）。
+        Run(FibroExe)
     }
     else
         MsgBox("Fibro.exe が見つかりません:`n" . FibroExe)

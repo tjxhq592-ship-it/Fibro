@@ -5,7 +5,6 @@ JSON 保存。破損時は既定（空リスト）へフォールバックして
 from __future__ import annotations
 
 import json
-import os
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -25,16 +24,14 @@ class Favorite:
     is_group: bool = False
 
     def is_reachable(self) -> bool:
-        """パス到達確認（ネットワークパスも os.path.isdir で判定）。
+        """パス到達確認（到達不可ネットワークドライブはタイムアウトで False）。
 
         グループはパスを持たないため常に到達可能とみなす。
         """
         if self.is_group:
             return True
-        try:
-            return os.path.isdir(self.path)
-        except OSError:
-            return False
+        from app.netpath import reachable
+        return reachable(self.path)
 
 
 class FavoriteStore:

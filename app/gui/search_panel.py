@@ -66,9 +66,16 @@ class SearchWorker(QThread):
         try:
             built_at = index.indexed_at(self._root)
             count = -1
-            if built_at is None or time.time() - built_at > INDEX_MAX_AGE_SEC:
+            if built_at is None:
                 self.status.emit("インデックス構築中…")
                 count = index.build(self._root, cancel=self._cancel)
+                if count < 0:  # キャンセル
+                    self.finished_ok.emit(0, 0)
+                    return
+            elif time.time() - built_at > INDEX_MAX_AGE_SEC:
+                # 期限切れは全再構築せず差分更新（書込量を抑える）
+                self.status.emit("インデックス更新中…")
+                count = index.update(self._root, cancel=self._cancel)
                 if count < 0:  # キャンセル
                     self.finished_ok.emit(0, 0)
                     return

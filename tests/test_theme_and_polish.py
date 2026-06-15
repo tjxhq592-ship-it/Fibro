@@ -47,6 +47,23 @@ class TestThemeManager:
         assert color.lightness() < 100  # 暗い背景
         tm.apply(qapp, "light")
 
+    def test_apply_sets_native_color_scheme(self, qapp, tmp_path):
+        """テーマ適用で Qt のカラースキーム（タイトルバー追従）も切り替わる。
+
+        offscreen プラットフォームでは setColorScheme が no-op（Unknown のまま）
+        のため、その場合は例外なく適用できることのみ確認する。
+        """
+        from PySide6.QtCore import Qt
+        tm = ThemeManager(tmp_path / "settings.json")
+        hints = qapp.styleHints()
+        tm.apply(qapp, "dark")
+        if hints.colorScheme() != Qt.ColorScheme.Unknown:
+            assert hints.colorScheme() == Qt.ColorScheme.Dark
+            tm.apply(qapp, "light")
+            assert hints.colorScheme() == Qt.ColorScheme.Light
+        else:
+            tm.apply(qapp, "light")  # no-op 環境でも落ちないこと
+
 
 class TestSingleRename:
     def test_f2_rename_via_executor(self, qapp, tmp_path):

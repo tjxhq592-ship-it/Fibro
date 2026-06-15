@@ -73,12 +73,25 @@ class ThemeManager:
     def apply(self, app: QApplication, theme: str | None = None) -> None:
         theme = theme or self.theme
         app.setStyle("Fusion")
+        # OS のタイトルバー（非クライアント領域）も Qt 経由で追従させる。
+        # Qt が DWM のダークモード設定と再描画まで正しく処理する。
+        self._apply_color_scheme(app, theme)
         if theme == "dark":
             app.setPalette(_dark_palette())
         else:
             app.setPalette(app.style().standardPalette())
         self._settings["theme"] = theme
         self._save()
+
+    @staticmethod
+    def _apply_color_scheme(app: QApplication, theme: str) -> None:
+        """ネイティブのカラースキーム（タイトルバー等）を切替。Qt6.5+。"""
+        from PySide6.QtCore import Qt
+        hints = app.styleHints()
+        if hasattr(hints, "setColorScheme"):
+            hints.setColorScheme(
+                Qt.ColorScheme.Dark if theme == "dark"
+                else Qt.ColorScheme.Light)
 
     def toggle(self, app: QApplication) -> str:
         new_theme = "dark" if self.theme == "light" else "light"

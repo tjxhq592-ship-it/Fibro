@@ -60,36 +60,46 @@ class SearchIndex:
             self._local.conn = conn
         return conn
 
-    # ---- 構築 ----
-    def build(self, root: str | Path,
-              cancel: threading.Event | None = None) -> int:
-        """root 以下を走査してインデックスを構築（既存分は置き換え）。
-
-        戻り値は登録ファイル数。キャンセル時は変更を捨てて -1。
-        """
-        root = str(Path(root))
-        cancel = cancel or threading.Event()
-        conn = self._conn()
-        rows: list[tuple[str, str, str]] = []
+    # ---- 走査 ----
+    @staticmethod
+    def _scan(root: str, cancel: threading.Event) -> dict[str, str] | None:
+        """root 以下を走査して {path: name} を返す。キャンセルで None。"""
+        result: dict[str, str] = {}
         stack = [root]
         while stack:
             if cancel.is_set():
-                return -1
+                return None
             current = stack.pop()
             try:
                 with os.scandir(current) as entries:
                     for entry in entries:
                         if cancel.is_set():
-                            return -1
+                            return None
                         try:
                             if entry.is_dir(follow_symlinks=False):
                                 stack.append(entry.path)
                             else:
-                                rows.append((root, entry.path, entry.name))
+                                result[entry.path] = entry.name
                         except OSError:
                             continue
             except OSError:
                 continue
+        return result
+
+    # ---- 構築 ----
+    def build(self, root: str | Path,
+              cancel: threading.Event | None = None) -> int:
+        """root 以下を走査してインデックスを構築（既存分は全置き換え）。
+
+        戻り値は登録ファイル数。キャンセル時は変更を捨てて -1。
+        """
+        root = str(Path(root))
+        cancel = cancel or threading.Event()
+        scanned = self._scan(root, cancel)
+        if scanned is None:
+            return -1
+        rows = [(root, path, name) for path, name in scanned.items()]
+        conn = self._conn()
         with conn:
             conn.execute("DELETE FROM files WHERE root = ?", (root,))
             conn.executemany(
@@ -98,6 +108,42 @@ class SearchIndex:
                 "INSERT OR REPLACE INTO roots(root, indexed_at, file_count) "
                 "VALUES (?, ?, ?)", (root, time.time(), len(rows)))
         return len(rows)
+
+    def update(self, root: str | Path,
+               cancel: threading.Event | None = None) -> int:
+        """差分更新: 追加分のみ INSERT、消滅分のみ DELETE（FTS は差分だけ更新）。
+
+        未構築の root は build にフォールバック。戻り値は現在の総ファイル数。
+        キャンセルで -1。
+        """
+        root = str(Path(root))
+        cancel = cancel or threading.Event()
+        conn = self._conn()
+        cur = conn.execute("SELECT 1 FROM roots WHERE root = ?", (root,))
+        if cur.fetchone() is None:
+            return self.build(root, cancel)
+
+        scanned = self._scan(root, cancel)
+        if scanned is None:
+            return -1
+        current = set(scanned)  # 現在のパス集合
+        existing = {r[0] for r in conn.execute(
+            "SELECT path FROM files WHERE root = ?", (root,))}
+        added = current - existing
+        removed = existing - current
+        with conn:
+            if removed:
+                conn.executemany(
+                    "DELETE FROM files WHERE root = ? AND path = ?",
+                    [(root, p) for p in removed])
+            if added:
+                conn.executemany(
+                    "INSERT INTO files(root, path, name) VALUES (?, ?, ?)",
+                    [(root, p, scanned[p]) for p in added])
+            conn.execute(
+                "UPDATE roots SET indexed_at = ?, file_count = ? WHERE root = ?",
+                (time.time(), len(current), root))
+        return len(current)
 
     # ---- 照会 ----
     def indexed_at(self, root: str | Path) -> float | None:

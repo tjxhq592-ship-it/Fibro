@@ -10,6 +10,8 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from app.longpath import extend
+
 
 @dataclass
 class RenameRecord:
@@ -44,19 +46,19 @@ class RenameExecutor:
             for old, new in pairs:
                 src = d / old
                 tmp = d / f".__rename_tmp_{uuid.uuid4().hex}"
-                os.rename(src, tmp)
+                os.rename(extend(src), extend(tmp))
                 done_temp.append((src, tmp))
                 temp_map.append((tmp, d / new, old))
             # 第2段階: 一時名 → 新名
             record = RenameRecord(directory=str(d))
             for tmp, final, old in temp_map:
-                os.rename(tmp, final)
+                os.rename(extend(tmp), extend(final))
                 record.mapping.append((old, final.name))
         except OSError:
             # ロールバック: 一時名に退避済みのものを元へ戻す
             for orig, tmp in reversed(done_temp):
                 if tmp.exists() and not orig.exists():
-                    os.rename(tmp, orig)
+                    os.rename(extend(tmp), extend(orig))
             raise
         self._history.append(record)
         return record
