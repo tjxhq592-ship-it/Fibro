@@ -1,0 +1,30 @@
+{
+  "presets": [
+    {
+      "name": "aa",
+      "rule": {
+        "search": "ad",
+        "replace": "",
+        "use_regex": false,
+        "target": "name",
+        "case_mode": "keep",
+        "counter_start": 1,
+        "counter_step": 1,
+        "counter_digits": 3
+      }
+    },
+    {
+      "name": "sss",
+      "rule": {
+        "search": "ssssssf",
+        "replace": "",
+        "use_regex": false,
+        "target": "name",
+        "case_mode": "keep",
+        "counter_start": 1,
+        "counter_step": 1,
+        "counter_digits": 3
+      }
+    }
+  ]
+}

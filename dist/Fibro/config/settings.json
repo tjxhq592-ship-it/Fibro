@@ -1,28 +1,3 @@
 {
-  "theme": "dark",
-  "tabs": [
-    "C:\\Users\\hiros\\projects\\Fibro"
-  ],
-  "columns": "AAAA/wAAAAAAAAABAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAkQAAAAEAQEBAAAAAAAAAAAAAAAAAGT/////AAAAhAAAAAAAAAAEAAABGAAAAAEAAAAAAAAAZAAAAAEAAAAAAAAAZAAAAAEAAAAAAAAAZAAAAAEAAAAAAAAD6AAAAAAAAAAAAAAAAAAAAAAAAAAAAQ==",
-  "layout": {
-    "main_splitter": [
-      221,
-      863
-    ],
-    "left_splitter": [
-      139,
-      139,
-      277
-    ],
-    "pane_splitter": [
-      863,
-      0
-    ],
-    "window": [
-      410,
-      166,
-      1100,
-      700
-    ]
-  }
+  "theme": "light"
 }
