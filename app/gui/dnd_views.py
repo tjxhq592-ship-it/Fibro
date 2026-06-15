@@ -33,6 +33,19 @@ class _DropMixin:
     def _dest_dir_for(self, index: QModelIndex) -> str | None:
         raise NotImplementedError
 
+    def mousePressEvent(self, event) -> None:  # noqa: N802 — Qt API
+        """マウスのサイドボタンで履歴を戻る/進む（標準エクスプローラー同様）。"""
+        button = event.button()
+        if button == Qt.MouseButton.BackButton:
+            self.mouse_nav.emit(False)
+            event.accept()
+            return
+        if button == Qt.MouseButton.ForwardButton:
+            self.mouse_nav.emit(True)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
     def dragEnterEvent(self, event) -> None:  # noqa: N802 — Qt API
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
@@ -68,6 +81,7 @@ class FileTableView(_DropMixin, QTableView):
     """ファイル一覧。ドラッグ元かつ（フォルダ行への）ドロップ先。"""
 
     files_dropped = Signal(list, str, bool)  # paths, dest_dir, copy
+    mouse_nav = Signal(bool)  # True=進む / False=戻る
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -101,6 +115,7 @@ class FolderTreeView(_DropMixin, QTreeView):
     """フォルダツリー。ドロップ先（ツリーのフォルダへ移動/コピー）。"""
 
     files_dropped = Signal(list, str, bool)
+    mouse_nav = Signal(bool)  # True=進む / False=戻る
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)

@@ -10,6 +10,8 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from app.atomicio import atomic_write_text
+
 
 @dataclass
 class Favorite:
@@ -64,10 +66,9 @@ class FavoriteStore:
             self.favorites = []
 
     def save(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
         data = {"favorites": [asdict(f) for f in self.favorites]}
-        self._path.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        atomic_write_text(
+            self._path, json.dumps(data, ensure_ascii=False, indent=2))
 
     def add(self, label: str, path: str, tags: list[str] | None = None,
             note: str = "", parent_id: str = "") -> Favorite:

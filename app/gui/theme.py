@@ -10,6 +10,8 @@ from pathlib import Path
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
+from app.atomicio import atomic_write_text
+
 ACCENT = QColor("#3d7eff")
 
 
@@ -51,10 +53,9 @@ class ThemeManager:
 
     def _save(self) -> None:
         try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            self._path.write_text(
-                json.dumps(self._settings, ensure_ascii=False, indent=2),
-                encoding="utf-8")
+            atomic_write_text(
+                self._path,
+                json.dumps(self._settings, ensure_ascii=False, indent=2))
         except OSError:
             pass  # 設定保存失敗でアプリは止めない
 

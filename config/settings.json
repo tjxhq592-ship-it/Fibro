@@ -2,12 +2,13 @@
   "theme": "dark",
   "layout": {
     "main_splitter": [
-      167,
-      469
+      482,
+      1422
     ],
     "left_splitter": [
-      275,
-      201
+      320,
+      252,
+      253
     ],
     "window": [
       0,

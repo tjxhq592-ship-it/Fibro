@@ -9,14 +9,15 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QGridLayout, QHBoxLayout,
-    QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QTableWidget,
-    QTableWidgetItem, QVBoxLayout,
+    QInputDialog, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox,
+    QTableWidget, QTableWidgetItem, QVBoxLayout,
 )
 
 from app.engine.rename_engine import (
     CaseMode, RenameEngine, RenamePlan, RenameRule, Status, Target,
 )
 from app.engine.rename_history import RenameExecutor
+from app.models.rename_presets import RenamePresetStore
 
 _STATUS_LABEL = {
     Status.OK: "✓",
@@ -39,7 +40,7 @@ class RenameDialog(QDialog):
 
     def __init__(self, directory: str, selected_names: list[str],
                  existing_names: set[str], executor: RenameExecutor,
-                 parent=None) -> None:
+                 parent=None, preset_store: RenamePresetStore | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"一括リネーム — {len(selected_names)}件")
         self.resize(720, 480)
@@ -48,9 +49,12 @@ class RenameDialog(QDialog):
         self._existing = existing_names
         self._engine = RenameEngine()
         self._executor = executor
+        self._preset_store = preset_store
         self._plan: RenamePlan | None = None
 
         self._build_ui()
+        if self._preset_store is not None:
+            self._reload_presets()
         # デバウンス付きライブプレビュー
         self._debounce = QTimer(self, singleShot=True, interval=150)
         self._debounce.timeout.connect(self._update_preview)
@@ -59,6 +63,23 @@ class RenameDialog(QDialog):
     # ---- UI構築 ----
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
+
+        # プリセット行（preset_store がある時のみ表示）
+        if self._preset_store is not None:
+            preset_row = QHBoxLayout()
+            preset_row.addWidget(QLabel("プリセット:"))
+            self.preset_combo = QComboBox()
+            self.preset_combo.setMinimumWidth(160)
+            preset_row.addWidget(self.preset_combo, stretch=1)
+            load_btn = QPushButton("読み込み")
+            save_btn = QPushButton("保存…")
+            del_btn = QPushButton("削除")
+            load_btn.clicked.connect(self._load_selected_preset)
+            save_btn.clicked.connect(self._save_preset)
+            del_btn.clicked.connect(self._delete_selected_preset)
+            for b in (load_btn, save_btn, del_btn):
+                preset_row.addWidget(b)
+            layout.addLayout(preset_row)
 
         grid = QGridLayout()
         self.search_edit = QLineEdit()
@@ -148,6 +169,68 @@ class RenameDialog(QDialog):
             counter_step=self.counter_step.value(),
             counter_digits=self.counter_digits.value(),
         )
+
+    # ---- プリセット ----
+    def _rule_to_dict(self, rule: RenameRule) -> dict:
+        return {
+            "search": rule.search,
+            "replace": rule.replace,
+            "use_regex": rule.use_regex,
+            "target": rule.target.value,
+            "case_mode": rule.case_mode.value,
+            "counter_start": rule.counter_start,
+            "counter_step": rule.counter_step,
+            "counter_digits": rule.counter_digits,
+        }
+
+    def _apply_dict(self, rule: dict) -> None:
+        self.search_edit.setText(rule.get("search", ""))
+        self.replace_edit.setText(rule.get("replace", ""))
+        self.regex_check.setChecked(bool(rule.get("use_regex", False)))
+        self._set_combo(self.target_combo, Target, rule.get("target"))
+        self._set_combo(self.case_combo, CaseMode, rule.get("case_mode"))
+        self.counter_start.setValue(int(rule.get("counter_start", 1)))
+        self.counter_step.setValue(int(rule.get("counter_step", 1)))
+        self.counter_digits.setValue(int(rule.get("counter_digits", 3)))
+        self._update_preview()
+
+    @staticmethod
+    def _set_combo(combo: QComboBox, enum_cls, value) -> None:
+        try:
+            target = enum_cls(value)
+        except ValueError:
+            return
+        idx = combo.findData(target)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+
+    def _reload_presets(self) -> None:
+        self.preset_combo.clear()
+        self.preset_combo.addItems(self._preset_store.names())
+
+    def _load_selected_preset(self) -> None:
+        name = self.preset_combo.currentText()
+        preset = self._preset_store.get(name) if name else None
+        if preset:
+            self._apply_dict(preset.rule)
+
+    def _save_preset(self) -> None:
+        name, ok = QInputDialog.getText(
+            self, "プリセットを保存", "プリセット名:",
+            text=self.preset_combo.currentText())
+        name = name.strip()
+        if not ok or not name:
+            return
+        self._preset_store.add(name, self._rule_to_dict(self.current_rule()))
+        self._reload_presets()
+        idx = self.preset_combo.findText(name)
+        if idx >= 0:
+            self.preset_combo.setCurrentIndex(idx)
+
+    def _delete_selected_preset(self) -> None:
+        name = self.preset_combo.currentText()
+        if name and self._preset_store.remove(name):
+            self._reload_presets()
 
     def _update_preview(self) -> None:
         rule = self.current_rule()
