@@ -358,8 +358,10 @@ class FileTableView(_DropMixin, QTableView):
             self.preview_requested.emit()
             event.accept()
             return
+        # テンキーの Enter は KeypadModifier が付くため除外して判定
+        mods = event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
         if (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
-                and not event.modifiers()):
+                and mods == Qt.KeyboardModifier.NoModifier):
             self.open_requested.emit()
             event.accept()
             return
@@ -432,8 +434,10 @@ class FileIconView(_DropMixin, QListView):
             self.preview_requested.emit()
             event.accept()
             return
+        # テンキーの Enter は KeypadModifier が付くため除外して判定
+        mods = event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
         if (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
-                and not event.modifiers()):
+                and mods == Qt.KeyboardModifier.NoModifier):
             self.open_requested.emit()
             event.accept()
             return

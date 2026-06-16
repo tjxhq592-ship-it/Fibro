@@ -110,8 +110,11 @@ class FilePane(QWidget):
         from app.gui.thumbnails import shared_loader
         shared_loader().ready.connect(self.icon_view.viewport().update)
 
+        # アクティブ枠表示用に 2px のマージンを確保（枠は paintEvent で描く）。
+        # スタイルシートは使わない（テーマのパレットを壊さないため）。
+        self._active_border = None  # None=枠なし / True=アクティブ / False=非アクティブ
         self._stack = QStackedLayout(self)
-        self._stack.setContentsMargins(0, 0, 0, 0)
+        self._stack.setContentsMargins(2, 2, 2, 2)
         self._stack.addWidget(self.table)       # index 0 = details
         self._stack.addWidget(self.icon_view)   # index 1 = thumbnails
 
@@ -125,6 +128,26 @@ class FilePane(QWidget):
         for view in (self.table, self.icon_view):
             view.installEventFilter(self)
             view.viewport().installEventFilter(self)
+
+    def set_active_border(self, state) -> None:
+        """アクティブ枠の表示。None=なし / True=アクティブ / False=非アクティブ。"""
+        if self._active_border != state:
+            self._active_border = state
+            self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802 — Qt API
+        super().paintEvent(event)
+        if self._active_border is None:
+            return
+        from PySide6.QtGui import QColor, QPainter, QPalette, QPen
+        painter = QPainter(self)
+        if self._active_border:
+            pen = QPen(QColor("#3d7eff"), 2)
+        else:
+            pen = QPen(self.palette().color(QPalette.ColorRole.Mid), 1)
+        painter.setPen(pen)
+        # 枠線が切れないよう内側に 1px インセットして矩形を描く
+        painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
 
     def _path_of_index(self, proxy_index: QModelIndex) -> str:
         """プロキシ index → ファイルパス（サムネデリゲート用）。"""

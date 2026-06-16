@@ -432,6 +432,26 @@ class TestDualPane:
         assert win._dual
         assert not win.secondary_pane.isHidden()
 
+    def test_dual_border_no_stylesheet(self, qapp, tmp_path, monkeypatch):
+        """デュアルの枠線は paintEvent 描画で、スタイルシートを一切使わない。"""
+        a = tmp_path / "dt"
+        a.mkdir()
+        win = _make_window(tmp_path, monkeypatch)
+        win.navigate(str(a))
+        win.toggle_dual_pane()
+        # スタイルシートは使わない（テーブルもペインも空＝ダークパレット維持）
+        assert win._current_primary().table.styleSheet() == ""
+        assert win._current_primary().styleSheet() == ""
+        assert win.secondary_pane.styleSheet() == ""
+        # アクティブ枠の状態は内部フラグで保持
+        assert win._active_pane._active_border is True
+        other = (win.secondary_pane if win._active_pane is not win.secondary_pane
+                 else win._current_primary())
+        assert other._active_border is False
+        # 解除で枠なし
+        win.toggle_dual_pane()
+        assert win.secondary_pane._active_border is None
+
     def test_f6_switches_active_pane(self, qapp, tmp_path, monkeypatch):
         a = tmp_path / "d2"
         a.mkdir()

@@ -64,6 +64,19 @@ class TestDropHandling:
         assert window.table.dragEnabled()
         window.close()
 
+    def test_keypad_enter_opens(self, qapp):
+        """テンキーの Enter（KeypadModifier 付き）でも open_requested が発火。"""
+        from PySide6.QtCore import QEvent, Qt
+        from PySide6.QtGui import QKeyEvent
+        from app.gui.dnd_views import FileTableView
+        view = FileTableView()
+        fired = []
+        view.open_requested.connect(lambda: fired.append(True))
+        ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Enter,
+                       Qt.KeyboardModifier.KeypadModifier)
+        view.keyPressEvent(ev)
+        assert fired, "テンキー Enter で open_requested が発火しなかった"
+
 
 class TestIncrementalSearch:
     def test_typing_triggers_filename_search(self, qapp, tmp_path):

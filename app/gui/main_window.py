@@ -451,16 +451,13 @@ class MainWindow(QMainWindow):
         self._update_pane_borders()
 
     def _update_pane_borders(self) -> None:
-        """デュアル時にアクティブペインを枠線で示す。"""
+        """デュアル時にアクティブペインを枠線で示す（paintEvent 描画・SS不使用）。"""
         if not self._dual:
-            self.secondary_pane.table.setStyleSheet("")
-            self._current_primary().table.setStyleSheet("")
+            self.secondary_pane.set_active_border(None)
+            self._current_primary().set_active_border(None)
             return
         for pane in (self._current_primary(), self.secondary_pane):
-            active = pane is self._active_pane
-            pane.table.setStyleSheet(
-                "QTableView { border: 2px solid #3d7eff; }" if active
-                else "QTableView { border: 1px solid palette(mid); }")
+            pane.set_active_border(pane is self._active_pane)
 
     def new_tab(self, path: str | None = None) -> FilePane:
         target = path or (self._active_pane.current_path
