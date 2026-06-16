@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.gui.async_icons import shared_icon_provider
 from app.gui.dnd_views import FileIconView, FileTableView
 from app.gui.thumbnails import ThumbnailDelegate
 
@@ -70,6 +71,9 @@ class FilePane(QWidget):
         # 遅く固まる一因になるため無効化（通常の種別アイコンは維持）。
         self.list_model.setOption(
             QFileSystemModel.Option.DontUseCustomDirectoryIcons, True)
+        # ファイルアイコンは拡張子単位で遅延解決し、gatherer スレッドの
+        # シェル問い合わせによる初回フリーズを避ける（完成後に差分で再描画）。
+        self.list_model.setIconProvider(shared_icon_provider())
 
         self.proxy = CurrentDirFilterProxy(self)
         self.proxy.setSourceModel(self.list_model)
@@ -110,6 +114,12 @@ class FilePane(QWidget):
         self._stack.setContentsMargins(0, 0, 0, 0)
         self._stack.addWidget(self.table)       # index 0 = details
         self._stack.addWidget(self.icon_view)   # index 1 = thumbnails
+
+        # 遅延アイコンが解決したら両ビューを再描画（viewport は QObject なので
+        # ペイン破棄時に Qt が自動で接続解除する）。
+        provider = shared_icon_provider()
+        provider.signals.ready.connect(self.table.viewport().update)
+        provider.signals.ready.connect(self.icon_view.viewport().update)
 
         # フォーカス/クリックでアクティブ通知（両ビュー）
         for view in (self.table, self.icon_view):

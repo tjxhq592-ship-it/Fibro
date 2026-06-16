@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from app.engine.file_ops import FileOps
 from app.engine.rename_history import RenameExecutor
+from app.gui.async_icons import shared_icon_provider
 from app.gui.dnd_views import FolderTreeView
 from app.gui.file_pane import FilePane
 from app.gui.favorites_sidebar import FavoritesSidebar
@@ -31,7 +32,6 @@ from app.gui.preview_dialog import QuickPreviewDialog
 from app.gui.properties_dialog import PropertiesDialog
 from app.gui.recent_sidebar import RecentSidebar
 from app.gui.rename_dialog import RenameDialog
-from app.gui.search_panel import SearchPanel
 from app.gui.theme import ThemeManager
 from app.models.favorite import FavoriteStore
 from app.models.recent import RecentStore
@@ -152,7 +152,9 @@ class _OpenFileJob(QRunnable):
 
     def __init__(self, path: str, on_fail) -> None:
         super().__init__()
-        self._path = path
+        # QFileSystemModel はスラッシュ区切りを返し、UNC（//server/share/…）だと
+        # os.startfile が「ファイルが見つからない」になる。バックスラッシュへ正規化。
+        self._path = os.path.normpath(path)
         self._on_fail = on_fail
 
     def run(self) -> None:
@@ -200,6 +202,9 @@ class MainWindow(QMainWindow):
         # カスタムフォルダアイコンのシェル問い合わせを無効化（OneDrive 対策）
         self.tree_model.setOption(
             QFileSystemModel.Option.DontUseCustomDirectoryIcons, True)
+        # 拡張子単位の遅延アイコンプロバイダを共有し、ツリー展開時のシェル
+        # 問い合わせ回数を抑える（解決後に差分で再描画）。
+        self.tree_model.setIconProvider(shared_icon_provider())
         self.tree_model.setRootPath("")
 
         self._build_ui()
@@ -290,11 +295,15 @@ class MainWindow(QMainWindow):
         self.tree = FolderTreeView()
         self.tree.setModel(self.tree_model)
         self.tree.files_dropped.connect(self._on_files_dropped)
+        self.tree.native_drop_requested.connect(self._on_native_drop)
         self.tree.mouse_nav.connect(self._on_mouse_nav)
         for col in range(1, self.tree_model.columnCount()):
             self.tree.hideColumn(col)
         self.tree.setHeaderHidden(True)
         self.tree.clicked.connect(self._on_tree_clicked)
+        # 遅延アイコン解決後にツリーを差分再描画
+        shared_icon_provider().signals.ready.connect(
+            self.tree.viewport().update)
 
         # 中央右側: タブバー + ペインスプリッタ（主スタック + サブペイン）
         self.tab_bar = QTabBar()
@@ -353,15 +362,10 @@ class MainWindow(QMainWindow):
         self._left_splitter = left
         self._restore_layout()
 
-        # 検索ドック（Ctrl+F でトグル）
-        # settings は ThemeManager を共有（単一ライターにして上書き消失を防ぐ）
-        self.search_panel = SearchPanel(settings=self.theme_manager)
-        self.search_panel.file_selected.connect(self._on_search_file_selected)
-        self.search_dock = QDockWidget("検索", self)
-        self.search_dock.setWidget(self.search_panel)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea,
-                           self.search_dock)
-        self.search_dock.hide()
+        # 検索ドックは初回 Ctrl+F まで作らない（起動を速く保つ。SearchPanel は
+        # 検索エンジン等を引き込み import が重いため遅延生成）。
+        self.search_panel = None
+        self.search_dock = None
 
         # 下部: ステータス（選択情報 + ドライブ空き容量）
         bottom = QHBoxLayout()
@@ -380,11 +384,13 @@ class MainWindow(QMainWindow):
         pane = FilePane()
         for view in (pane.table, pane.icon_view):
             view.files_dropped.connect(self._on_files_dropped)
+            view.native_drop_requested.connect(self._on_native_drop)
             view.mouse_nav.connect(self._on_mouse_nav)
             view.doubleClicked.connect(self._on_table_double_clicked)
             view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             view.customContextMenuRequested.connect(self._show_context_menu)
             view.preview_requested.connect(self.quick_preview)
+            view.open_requested.connect(self._open_selected)
         pane.table.sortByColumn(0, Qt.SortOrder.AscendingOrder)
         pane.set_view_mode(self.theme_manager.get("view_mode", "details"))
         cols = self.theme_manager.get("columns")
@@ -432,7 +438,8 @@ class MainWindow(QMainWindow):
         self.filter_edit.blockSignals(True)
         self.filter_edit.setText(pane.filter_text)
         self.filter_edit.blockSignals(False)
-        self.search_panel.set_root(path)
+        if self.search_panel is not None:
+            self.search_panel.set_root(path)
         if path:
             self.tree.setCurrentIndex(self.tree_model.index(path))
         sel = pane.table.selectionModel()
@@ -600,6 +607,7 @@ class MainWindow(QMainWindow):
         add("一括リネーム", "Ctrl+H", self.open_rename_dialog)
         add("Undo", "Ctrl+Z", self.undo_last)
         add("削除", "Delete", self.delete_selected)
+        add("完全削除", "Shift+Delete", self.delete_selected_permanent)
         add("コピー", "Ctrl+C", lambda: self._set_clipboard("copy"))
         add("切り取り", "Ctrl+X", lambda: self._set_clipboard("cut"))
         add("貼り付け", "Ctrl+V", self.paste_clipboard)
@@ -746,7 +754,8 @@ class MainWindow(QMainWindow):
         self._active_pane.set_root_index(
             self.proxy.mapFromSource(self.list_model.index(path)))
         self.breadcrumb.set_path(path)
-        self.search_panel.set_root(path)
+        if self.search_panel is not None:
+            self.search_panel.set_root(path)
         tree_index = self.tree_model.index(path)
         self.tree.setCurrentIndex(tree_index)
         self.tree.expand(tree_index)
@@ -884,7 +893,8 @@ class MainWindow(QMainWindow):
             menu.addSeparator()
             menu.addAction("コピー\tCtrl+C", lambda: self._set_clipboard("copy"))
             menu.addAction("切り取り\tCtrl+X", lambda: self._set_clipboard("cut"))
-        if self._clipboard:
+        from app import clipboard_files
+        if clipboard_files.has_files():
             menu.addAction("貼り付け\tCtrl+V", self.paste_clipboard)
         # 新規作成（空白部分でも選択中でも使えるようカレント直下に作成）
         new_menu = menu.addMenu("新規作成")
@@ -897,6 +907,8 @@ class MainWindow(QMainWindow):
                            lambda: self._copy_paths_to_clipboard(paths))
             menu.addSeparator()
             menu.addAction("削除（ゴミ箱へ）\tDelete", self.delete_selected)
+            menu.addAction("完全に削除\tShift+Delete",
+                           self.delete_selected_permanent)
             menu.addSeparator()
             dirs = [p for p in paths if Path(p).is_dir()]
             fav_target = dirs[0] if dirs else None
@@ -975,6 +987,12 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 f"{len(paths)}件のパスをコピーしました", 3000)
 
+    def _open_selected(self) -> None:
+        """Enter キー: 選択中の項目を開く/実行（ダブルクリックと同等）。"""
+        paths = self.selected_paths()
+        if paths:
+            self._open_paths(paths)
+
     def _open_paths(self, paths: list[str]) -> None:
         for p in paths[:5]:  # 誤爆防止に上限
             if Path(p).is_dir():
@@ -986,22 +1004,29 @@ class MainWindow(QMainWindow):
     def _set_clipboard(self, mode: str) -> None:
         paths = self.selected_paths()
         if paths:
-            self._clipboard = (mode, paths)
+            # システムクリップボードへ（エクスプローラーと相互運用）
+            from app import clipboard_files
+            clipboard_files.set_files(paths, move=(mode == "cut"))
+            self._clipboard = (mode, paths)  # 後方互換（内部参照用）
             self.statusBar().showMessage(
                 f"{len(paths)}件を{'コピー' if mode == 'copy' else '切り取り'}しました", 3000)
 
     def paste_clipboard(self) -> None:
-        if not self._clipboard:
+        # システムクリップボードから読む（エクスプローラーでコピーした物も貼れる）
+        from app import clipboard_files
+        got = clipboard_files.get_files()
+        if got is None:
             return
+        paths, move = got
         from app.gui.conflict_dialog import make_resolver
-        mode, paths = self._clipboard
         resolver = make_resolver(self)
         try:
-            if mode == "copy":
-                self.file_ops.copy(paths, self.current_path, resolver=resolver)
-            else:
+            if move:
                 self.file_ops.move(paths, self.current_path, resolver=resolver)
+                clipboard_files.clear()
                 self._clipboard = None
+            else:
+                self.file_ops.copy(paths, self.current_path, resolver=resolver)
         except OSError as e:
             QMessageBox.critical(self, "貼り付け失敗", str(e))
             return
@@ -1013,7 +1038,17 @@ class MainWindow(QMainWindow):
         resolver = make_resolver(self)
         try:
             if copy:
-                self.file_ops.copy(paths, dest, resolver=resolver)
+                # 同フォルダへのコピーは「複製」なので衝突ダイアログを出さず
+                # 自動で (2) 付きの名前にする。別フォルダは従来の衝突解決。
+                dest_norm = str(Path(dest))
+                same = [p for p in paths
+                        if str(Path(p).parent) == dest_norm]
+                cross = [p for p in paths
+                         if str(Path(p).parent) != dest_norm]
+                if same:
+                    self.file_ops.copy(same, dest, resolver=None)
+                if cross:
+                    self.file_ops.copy(cross, dest, resolver=resolver)
             else:
                 self.file_ops.move(paths, dest, resolver=resolver)
         except OSError as e:
@@ -1023,6 +1058,27 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"{len(paths)}件を {Path(dest).name or dest} へ{verb}しました"
             "（Ctrl+Zで取り消し）", 5000)
+
+    def _on_native_drop(self, paths: list, dest: str, gx: int, gy: int) -> None:
+        """右ドラッグ: Windows ネイティブの「ここに解凍/コピー/移動…」を表示。
+
+        未対応・失敗時は Fibro の簡易メニュー（ここにコピー/移動）へフォールバック。
+        """
+        from app import shell_menu
+        if shell_menu.is_supported() and shell_menu.show_drag_drop_menu(
+                int(self.winId()), paths, dest, gx, gy):
+            return
+        # フォールバック: 自前メニュー（Undo 可能な既存操作を流用）
+        from PySide6.QtCore import QPoint
+        menu = QMenu(self)
+        name = Path(dest).name or dest
+        menu.addAction(f"ここにコピー（{name}）",
+                       lambda: self._on_files_dropped(paths, dest, True))
+        menu.addAction(f"ここに移動（{name}）",
+                       lambda: self._on_files_dropped(paths, dest, False))
+        menu.addSeparator()
+        menu.addAction("キャンセル")
+        menu.exec(QPoint(gx, gy))
 
     def delete_selected(self) -> None:
         paths = self.selected_paths()
@@ -1039,6 +1095,28 @@ class MainWindow(QMainWindow):
         try:
             self.file_ops.delete(paths)
             self.statusBar().showMessage(f"{len(paths)}件をゴミ箱に移動しました", 3000)
+        except OSError as e:
+            QMessageBox.critical(self, "削除失敗", str(e))
+
+    def delete_selected_permanent(self) -> None:
+        """Shift+Delete: ゴミ箱を経由せず完全削除（元に戻せない）。"""
+        paths = self.selected_paths()
+        if not paths:
+            return
+        names = "\n".join(Path(p).name for p in paths[:10])
+        if len(paths) > 10:
+            names += f"\n… 他{len(paths) - 10}件"
+        answer = QMessageBox.warning(
+            self, "完全に削除",
+            f"次の{len(paths)}件を完全に削除します。\n"
+            f"この操作は元に戻せません（ゴミ箱に入りません）。\n\n{names}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            n = self.file_ops.delete_permanent(paths)
+            self.statusBar().showMessage(f"{n}件を完全に削除しました", 3000)
         except OSError as e:
             QMessageBox.critical(self, "削除失敗", str(e))
 
@@ -1073,8 +1151,9 @@ class MainWindow(QMainWindow):
         except OSError as e:
             QMessageBox.critical(self, "作成失敗", str(e))
             return
-        self.refresh()
-        self._select_by_name(target.name)
+        # QFileSystemModel はカレントを監視しており作成は自動で一覧へ反映される。
+        # 重い全再スキャン（refresh の setRootPath 往復）は避け、反映後に選択する。
+        QTimer.singleShot(0, lambda n=target.name: self._select_by_name(n))
 
     def new_text_file(self) -> None:
         name, ok = QInputDialog.getText(
@@ -1091,8 +1170,8 @@ class MainWindow(QMainWindow):
         except OSError as e:
             QMessageBox.critical(self, "作成失敗", str(e))
             return
-        self.refresh()
-        self._select_by_name(target.name)
+        # 監視中のモデルが自動反映するため全再スキャンは不要。反映後に選択。
+        QTimer.singleShot(0, lambda n=target.name: self._select_by_name(n))
 
     def _template_dir(self) -> Path:
         return CONFIG_DIR / "templates"
@@ -1237,7 +1316,22 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "リネーム失敗", str(e))
 
     # ---- 検索 ----
+    def _ensure_search_panel(self):
+        """検索ドックを遅延生成（初回 Ctrl+F 時）。"""
+        if self.search_panel is None:
+            from app.gui.search_panel import SearchPanel
+            self.search_panel = SearchPanel(settings=self.theme_manager)
+            self.search_panel.file_selected.connect(
+                self._on_search_file_selected)
+            self.search_dock = QDockWidget("検索", self)
+            self.search_dock.setWidget(self.search_panel)
+            self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea,
+                               self.search_dock)
+            self.search_dock.hide()
+        return self.search_panel
+
     def toggle_search(self) -> None:
+        self._ensure_search_panel()
         if self.search_dock.isVisible():
             self.search_dock.hide()
         else:
@@ -1282,7 +1376,8 @@ class MainWindow(QMainWindow):
         self._save_tabs()
         self._save_columns()
         self._save_layout()
-        self.search_panel.cancel_search()
+        if self.search_panel is not None:
+            self.search_panel.cancel_search()
         super().closeEvent(event)
 
     # ---- リネーム / Undo ----
