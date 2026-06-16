@@ -353,6 +353,40 @@ class TestRubberBandSelection:
         self._press(table, center)
         assert table.dragEnabled() is True
 
+    def _move(self, view, point, buttons):
+        from PySide6.QtCore import QEvent, QPointF, Qt
+        from PySide6.QtGui import QMouseEvent
+        ev = QMouseEvent(
+            QEvent.Type.MouseMove, QPointF(point), QPointF(point),
+            Qt.MouseButton.NoButton, buttons, Qt.KeyboardModifier.NoModifier)
+        view.mouseMoveEvent(ev)
+
+    def test_table_draws_marquee_on_empty_drag(
+            self, qapp, tmp_path, monkeypatch):
+        """空白からドラッグすると詳細ビューが自前マーキー矩形を表示する。"""
+        from PySide6.QtCore import QPoint, Qt
+        d = tmp_path / "rb5"
+        d.mkdir()
+        (d / "z.txt").write_text("z")
+        win = _make_window(tmp_path, monkeypatch)
+        win.navigate(str(d))
+        for _ in range(50):
+            qapp.processEvents()
+        table = win._active_pane.table
+        assert table._draw_marquee is True
+        table.resize(400, 400)
+        # 空白を押して開始点を記録 → 大きく動かすとマーキーが出る
+        self._press(table, QPoint(60, 360))
+        assert table._marquee_origin is not None
+        # 下から上へドラッグして先頭の行（z.txt）を帯で覆う
+        self._move(table, QPoint(260, 4), Qt.MouseButton.LeftButton)
+        # トップレベル未表示の headless では isVisible は False のため、
+        # マーキーが生成され矩形に追従していること（geometry が非空）で検証する。
+        assert table._marquee is not None
+        assert not table._marquee.geometry().isEmpty()
+        # 帯に触れた行が選択されていること（自前の touch 選択）
+        assert len(table.selectionModel().selectedRows(0)) >= 1
+
 
 # ---- Win+E リモート起動（タブ追加・サイズ維持） ----
 class TestRemoteOpen:

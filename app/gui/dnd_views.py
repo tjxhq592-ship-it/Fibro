@@ -10,12 +10,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import (
-    QItemSelectionModel, QMimeData, QModelIndex, QPoint, QSortFilterProxyModel,
-    Qt, QUrl, Signal,
+    QItemSelection, QItemSelectionModel, QMimeData, QModelIndex, QPoint, QRect,
+    QSortFilterProxyModel, Qt, QUrl, Signal,
 )
 from PySide6.QtGui import QDrag
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QListView, QTableView, QTreeView,
+    QAbstractItemView, QApplication, QListView, QRubberBand, QTableView,
+    QTreeView,
 )
 
 # 右ボタンD&D / Ctrl+コピーD&D を識別するための marker MIME 形式
@@ -52,6 +53,12 @@ class _DropMixin:
     _rdrag_active = False                 # 右ドラッグ中か
     _suppress_context = False             # 直後の右クリックメニュー抑止
     _cdrag_origin: QPoint | None = None   # Ctrl+左ドラッグ（コピー）開始点
+    # 自前マーキー（半透明矩形）を描くか。Qt がマーキーを描かない詳細ビューで True。
+    # 選択自体は Qt ネイティブのラバーバンド（連続更新・触れたら選択）に任せ、
+    # ここでは Explorer 風の矩形を重ねて描くだけにする。
+    _draw_marquee = False
+    _marquee: QRubberBand | None = None
+    _marquee_origin: QPoint | None = None
 
     def _dest_dir_for(self, index: QModelIndex) -> str | None:
         raise NotImplementedError
@@ -118,6 +125,11 @@ class _DropMixin:
             on_selected = (index.isValid() and sm is not None
                            and sm.isSelected(index))
             self.setDragEnabled(bool(on_selected))
+            # 範囲選択の開始点を記録（ドラッグ移動でない時だけ自前マーキー対象）。
+            if self._draw_marquee and not on_selected:
+                self._marquee_origin = event.position().toPoint()
+            else:
+                self._marquee_origin = None
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802 — Qt API
@@ -145,7 +157,56 @@ class _DropMixin:
             if self._rdrag_active:
                 event.accept()  # ラバーバンド等を抑止
                 return
+        # 自前マーキー（Explorer 風の半透明矩形）を開始点から現在位置へ追従し、
+        # 矩形に触れた行を連続更新で選択する（この詳細ビュー構成では Qt ネイティブの
+        # ラバーバンド選択が発火しないため、選択も自前で行う）。
+        if (self._draw_marquee and self._marquee_origin is not None
+                and event.buttons() & Qt.MouseButton.LeftButton):
+            pos = event.position().toPoint()
+            if self._marquee is None:
+                if (pos - self._marquee_origin).manhattanLength() \
+                        < QApplication.startDragDistance():
+                    return  # 閾値未満はクリック扱い（まだ範囲選択しない）
+                self._marquee = QRubberBand(
+                    QRubberBand.Shape.Rectangle, self.viewport())
+            rect = QRect(self._marquee_origin, pos).normalized()
+            self._marquee.setGeometry(rect)
+            self._marquee.show()
+            self._marquee.raise_()  # アイテム描画の前面へ
+            self._select_rows_in_rect(rect)
+            event.accept()
+            return
         super().mouseMoveEvent(event)
+
+    def _select_rows_in_rect(self, rect: QRect) -> None:
+        """マーキー矩形に触れた行を ClearAndSelect で選択（Explorer 流の touch）。"""
+        sm = self.selectionModel()
+        model = self.model()
+        if sm is None or model is None:
+            return
+        root = self.rootIndex()
+        # 可視範囲の行だけ走査（巨大フォルダでも軽量）。
+        first = self.rowAt(0) if hasattr(self, "rowAt") else 0
+        last = (self.rowAt(self.viewport().height() - 1)
+                if hasattr(self, "rowAt") else model.rowCount(root) - 1)
+        if first < 0:
+            first = 0
+        if last < 0:
+            last = model.rowCount(root) - 1
+        width = self.viewport().width()
+        last_col = max(0, model.columnCount(root) - 1)
+        selection = QItemSelection()
+        for row in range(first, last + 1):
+            idx0 = model.index(row, 0, root)
+            vr = self.visualRect(idx0)
+            if vr.isEmpty():
+                continue
+            # 行は全幅。帯の縦範囲と重なれば選択（SelectRows の touch 判定）。
+            row_rect = QRect(0, vr.y(), width, vr.height())
+            if rect.intersects(row_rect):
+                selection.select(idx0, model.index(row, last_col, root))
+        sm.select(
+            selection, QItemSelectionModel.SelectionFlag.ClearAndSelect)
 
     def _start_copy_drag(self) -> None:
         """選択中アイテムをコピー意図でドラッグ開始（既定動作=Copy）。"""
@@ -176,6 +237,12 @@ class _DropMixin:
         if self._drag_source and event.button() == Qt.MouseButton.LeftButton:
             self._cdrag_origin = None
             self.setDragEnabled(True)
+            # 自前マーキーを片付ける（選択結果はそのまま保持）。
+            self._marquee_origin = None
+            if self._marquee is not None:
+                self._marquee.hide()
+                self._marquee.deleteLater()
+                self._marquee = None
 
     def contextMenuEvent(self, event) -> None:  # noqa: N802 — Qt API
         """右ドラッグ直後の右クリックメニューは抑止する。"""
@@ -265,6 +332,9 @@ class FileTableView(_DropMixin, QTableView):
     preview_requested = Signal()  # Space キーでクイックプレビュー
     open_requested = Signal()  # Enter キーで選択項目を開く/実行
     _drag_source = True
+    # 詳細ビューは Qt がマーキー矩形を描かないため、自前で半透明矩形を重ねる
+    # （アイコンビューは setSelectionRectVisible で Qt が描くので不要）。
+    _draw_marquee = True
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
