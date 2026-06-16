@@ -870,6 +870,14 @@ class MainWindow(QMainWindow):
 
     # ---- コンテキストメニュー ----
     def _show_context_menu(self, pos) -> None:
+        # 右ドラッグ直後（0.6秒以内）に来る右クリックメニューは抑止する。
+        # CustomContextMenu 経由でここに届くため contextMenuEvent では拾えない。
+        import time
+        src = self.sender()
+        if src is not None and (
+                time.monotonic() - getattr(src, "_rdrag_release_time", 0.0)
+                < 0.6):
+            return
         paths = self.selected_paths()
         # Windows 標準メニュー設定が ON かつ選択ありなら、ネイティブのシェル
         # コンテキストメニューを主メニューとして表示する（失敗時は従来メニューへ）。

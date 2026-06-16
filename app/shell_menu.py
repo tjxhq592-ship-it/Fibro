@@ -41,6 +41,22 @@ def show_shell_context_menu(hwnd: int, paths: list[str], x: int, y: int) -> bool
         return False
 
 
+def show_drag_drop_menu(hwnd: int, paths: list[str], dest_dir: str,
+                        x: int, y: int) -> bool:
+    """paths を dest_dir へ「右ドラッグ」したときの Windows ネイティブメニューを表示。
+
+    「ここにコピー/移動/ショートカット作成」＋7-Zip 等の「ここに解凍」を含む。
+    シェルの IDataObject + IDropTarget を使い、右ボタンドロップ（MK_RBUTTON）として
+    Drop を実行する。メニュー表示まで到達で True、失敗で False。
+    """
+    if not is_supported() or not paths or not dest_dir:
+        return False
+    try:
+        return _drag_drop(hwnd, paths, dest_dir, x, y)
+    except Exception:  # noqa: BLE001 — どんな COM/ctypes 失敗もフォールバック
+        return False
+
+
 # --- 以下 ctypes COM 実装 -------------------------------------------------
 
 def _show(hwnd: int, paths: list[str], x: int, y: int) -> bool:
@@ -203,5 +219,165 @@ def _show(hwnd: int, paths: list[str], x: int, y: int) -> bool:
         release(ccm)
         release(parent)
         for fp in full_pidls:
+            CoTaskMemFree(fp)
+        ole32.CoUninitialize()
+
+
+def _drag_drop(hwnd: int, paths: list[str], dest_dir: str,
+               x: int, y: int) -> bool:
+    import ctypes
+    import os
+    from ctypes import POINTER, byref, c_void_p, c_wchar_p
+    from ctypes.wintypes import HWND, UINT
+
+    ole32 = ctypes.OleDLL("ole32")
+    shell32 = ctypes.WinDLL("shell32")
+
+    S_OK = 0
+    MK_RBUTTON = 0x0002
+    DROPEFFECT_ALL = 0x1 | 0x2 | 0x4  # COPY | MOVE | LINK
+    REL = 2
+    SF_GET_UI_OBJECT_OF = 10
+    # IDropTarget vtable: 3 DragEnter, 4 DragOver, 5 DragLeave, 6 Drop
+    DT_DRAGENTER, DT_DRAGOVER, DT_DROP = 3, 4, 6
+
+    class GUID(ctypes.Structure):
+        _fields_ = [("Data1", ctypes.c_uint32), ("Data2", ctypes.c_uint16),
+                    ("Data3", ctypes.c_uint16), ("Data4", ctypes.c_ubyte * 8)]
+
+    class POINTL(ctypes.Structure):
+        _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+    def guid(s: str) -> GUID:
+        g = GUID()
+        ole32.IIDFromString(c_wchar_p(s), byref(g))
+        return g
+
+    def vtbl_call(ptr, index, restype, argtypes):
+        vtbl = ctypes.cast(ptr, POINTER(c_void_p))
+        func_ptr = ctypes.cast(vtbl[0], POINTER(c_void_p))[index]
+        return ctypes.WINFUNCTYPE(restype, *argtypes)(func_ptr)
+
+    def release(ptr):
+        if ptr:
+            vtbl_call(ptr, REL, ctypes.c_ulong, (c_void_p,))(ptr)
+
+    IID_IShellFolder = guid("{000214E6-0000-0000-C000-000000000046}")
+    IID_IDataObject = guid("{0000010E-0000-0000-C000-000000000046}")
+    IID_IDropTarget = guid("{00000122-0000-0000-C000-000000000046}")
+
+    shell32.SHParseDisplayName.restype = ctypes.HRESULT
+    shell32.SHParseDisplayName.argtypes = [
+        c_wchar_p, c_void_p, POINTER(c_void_p), ctypes.c_ulong,
+        POINTER(ctypes.c_ulong)]
+    shell32.SHBindToParent.restype = ctypes.HRESULT
+    shell32.SHBindToParent.argtypes = [
+        c_void_p, POINTER(GUID), POINTER(c_void_p), POINTER(c_void_p)]
+    ILFindLastID = shell32.ILFindLastID
+    ILFindLastID.restype = c_void_p
+    ILFindLastID.argtypes = [c_void_p]
+    CoTaskMemFree = ole32.CoTaskMemFree
+    CoTaskMemFree.argtypes = [c_void_p]
+
+    def parse(path: str) -> c_void_p:
+        pidl = c_void_p()
+        attrs = ctypes.c_ulong(0)
+        if shell32.SHParseDisplayName(
+                c_wchar_p(os.path.normpath(path)), None, byref(pidl), 0,
+                byref(attrs)) == S_OK and pidl:
+            return pidl
+        return c_void_p()
+
+    def get_ui_object(folder, n, children, iid):
+        out = c_void_p()
+        get_ui = vtbl_call(
+            folder, SF_GET_UI_OBJECT_OF, ctypes.HRESULT,
+            (c_void_p, HWND, UINT, POINTER(c_void_p), POINTER(GUID),
+             POINTER(ctypes.c_ulong), POINTER(c_void_p)))
+        if get_ui(folder, HWND(hwnd), UINT(n), children, byref(iid), None,
+                  byref(out)) == S_OK and out:
+            return out
+        return c_void_p()
+
+    ole32.CoInitialize(None)
+    src_pidls: list = []
+    dest_pidl = c_void_p()
+    src_parent = c_void_p()
+    dest_parent = c_void_p()
+    dataobj = c_void_p()
+    droptgt = c_void_p()
+    try:
+        for p in paths:
+            pidl = parse(p)
+            if pidl:
+                src_pidls.append(pidl)
+        if not src_pidls:
+            return False
+        child = c_void_p()
+        if shell32.SHBindToParent(
+                src_pidls[0], byref(IID_IShellFolder), byref(src_parent),
+                byref(child)) != S_OK or not src_parent:
+            return False
+        arr = (c_void_p * len(src_pidls))()
+        kept = 0
+        for fp in src_pidls:
+            last = ILFindLastID(fp)
+            if last:
+                arr[kept] = c_void_p(last)
+                kept += 1
+        if kept == 0:
+            return False
+        dataobj = get_ui_object(src_parent, kept, arr, IID_IDataObject)
+        if not dataobj:
+            return False
+        dest_pidl = parse(dest_dir)
+        if not dest_pidl:
+            return False
+        dest_child = c_void_p()
+        if shell32.SHBindToParent(
+                dest_pidl, byref(IID_IShellFolder), byref(dest_parent),
+                byref(dest_child)) != S_OK or not dest_parent:
+            return False
+        dchild_arr = (c_void_p * 1)()
+        dchild_arr[0] = c_void_p(ILFindLastID(dest_pidl))
+        droptgt = get_ui_object(dest_parent, 1, dchild_arr, IID_IDropTarget)
+        if not droptgt:
+            return False
+        pt = POINTL(x, y)
+        effect = ctypes.c_ulong(DROPEFFECT_ALL)
+        drag_enter = vtbl_call(
+            droptgt, DT_DRAGENTER, ctypes.HRESULT,
+            (c_void_p, c_void_p, ctypes.c_ulong, POINTL,
+             POINTER(ctypes.c_ulong)))
+        drag_over = vtbl_call(
+            droptgt, DT_DRAGOVER, ctypes.HRESULT,
+            (c_void_p, ctypes.c_ulong, POINTL, POINTER(ctypes.c_ulong)))
+        drop = vtbl_call(
+            droptgt, DT_DROP, ctypes.HRESULT,
+            (c_void_p, c_void_p, ctypes.c_ulong, POINTL,
+             POINTER(ctypes.c_ulong)))
+        try:
+            drag_enter(droptgt, dataobj, MK_RBUTTON, pt, byref(effect))
+        except OSError:
+            pass
+        effect.value = DROPEFFECT_ALL
+        try:
+            drag_over(droptgt, MK_RBUTTON, pt, byref(effect))
+        except OSError:
+            pass
+        effect.value = DROPEFFECT_ALL
+        try:
+            drop(droptgt, dataobj, MK_RBUTTON, pt, byref(effect))
+        except OSError:
+            pass
+        return True
+    finally:
+        release(droptgt)
+        release(dataobj)
+        release(dest_parent)
+        release(src_parent)
+        if dest_pidl:
+            CoTaskMemFree(dest_pidl)
+        for fp in src_pidls:
             CoTaskMemFree(fp)
         ole32.CoUninitialize()

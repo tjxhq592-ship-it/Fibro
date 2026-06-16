@@ -53,6 +53,9 @@ class _DropMixin:
     _rdrag_active = False                 # 右ドラッグ中か
     _suppress_context = False             # 直後の右クリックメニュー抑止
     _cdrag_origin: QPoint | None = None   # Ctrl+左ドラッグ（コピー）開始点
+    _cdrag_index = None                   # Ctrl+押下したアイテム（解放時トグル用）
+    _cdrag_dragged = False                # Ctrl+ドラッグが起きたか
+    _rdrag_release_time = 0.0             # 右ドラッグ完了時刻（直後の右クリック抑止）
     # 自前マーキー（半透明矩形）を描くか。Qt がマーキーを描かない詳細ビューで True。
     # 選択自体は Qt ネイティブのラバーバンド（連続更新・触れたら選択）に任せ、
     # ここでは Explorer 風の矩形を重ねて描くだけにする。
@@ -108,22 +111,22 @@ class _DropMixin:
             index = self.indexAt(event.position().toPoint())
             sm = self.selectionModel()
             ctrl = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
-            if ctrl and index.isValid() and sm is not None:
-                # Ctrl+左ドラッグ＝コピー。Qt 標準だと Ctrl+押下で選択がトグル解除
-                # されドラッグが始まらないため、super を呼ばず手動でドラッグする。
-                if not sm.isSelected(index):
-                    sm.select(
-                        index,
-                        QItemSelectionModel.SelectionFlag.ClearAndSelect
-                        | QItemSelectionModel.SelectionFlag.Rows)
+            on_selected = (index.isValid() and sm is not None
+                           and sm.isSelected(index))
+            if ctrl and on_selected:
+                # Ctrl+「選択済み」アイテム＝コピードラッグ候補。選択は変えずに
+                # 保持し（Qt 標準の即時トグル解除を回避）、ドラッグしなければ
+                # 解放時にトグル（Ctrl+クリックで選択解除）。未選択への Ctrl+
+                # クリックは super に任せて複数選択を成立させる。
+                from PySide6.QtCore import QPersistentModelIndex
                 self._cdrag_origin = event.position().toPoint()
+                self._cdrag_index = QPersistentModelIndex(index)
+                self._cdrag_dragged = False
                 event.accept()
                 return
             # Explorer 流: 選択済みアイテムを押した時だけドラッグ移動を許可。
             # 空白／未選択アイテムを押した時はドラッグを無効化して、
             # ラバーバンド（範囲）選択を開始できるようにする。
-            on_selected = (index.isValid() and sm is not None
-                           and sm.isSelected(index))
             self.setDragEnabled(bool(on_selected))
             # 範囲選択の開始点を記録（ドラッグ移動でない時だけ自前マーキー対象）。
             if self._draw_marquee and not on_selected:
@@ -145,6 +148,8 @@ class _DropMixin:
                      - self._cdrag_origin).manhattanLength()
             if moved >= QApplication.startDragDistance():
                 self._cdrag_origin = None
+                self._cdrag_dragged = True
+                self._cdrag_index = None
                 self._start_copy_drag()
             event.accept()
             return
@@ -228,6 +233,24 @@ class _DropMixin:
             self._rdrag_origin = None
             self._suppress_context = True  # 直後の右クリックメニューを抑止
             self._finish_right_drag(event.globalPosition().toPoint())
+            # ネイティブメニュー（モーダル）終了後に来る右クリックメニューを
+            # 抑止するため、完了時刻を記録（_show_context_menu が参照）。
+            import time
+            self._rdrag_release_time = time.monotonic()
+            event.accept()
+            return
+        # Ctrl+押下したアイテムをドラッグせず解放 = Ctrl+クリック → 選択トグル
+        if (self._drag_source and event.button() == Qt.MouseButton.LeftButton
+                and self._cdrag_index is not None and not self._cdrag_dragged):
+            from PySide6.QtCore import QModelIndex
+            sm = self.selectionModel()
+            if sm is not None:
+                sm.select(
+                    QModelIndex(self._cdrag_index),
+                    QItemSelectionModel.SelectionFlag.Toggle
+                    | QItemSelectionModel.SelectionFlag.Rows)
+            self._cdrag_index = None
+            self._cdrag_origin = None
             event.accept()
             return
         super().mouseReleaseEvent(event)
@@ -236,6 +259,7 @@ class _DropMixin:
             self._rdrag_active = False
         if self._drag_source and event.button() == Qt.MouseButton.LeftButton:
             self._cdrag_origin = None
+            self._cdrag_index = None
             self.setDragEnabled(True)
             # 自前マーキーを片付ける（選択結果はそのまま保持）。
             self._marquee_origin = None
