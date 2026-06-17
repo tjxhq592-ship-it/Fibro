@@ -16,10 +16,10 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
-    QApplication, QDockWidget, QFileSystemModel, QHBoxLayout, QInputDialog,
-    QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QSplitter,
-    QStackedLayout, QStackedWidget, QStatusBar, QStyle, QTabBar,
-    QToolButton, QTreeView, QVBoxLayout, QWidget,
+    QApplication, QDialog, QDialogButtonBox, QDockWidget, QFileSystemModel,
+    QFormLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow,
+    QMenu, QMessageBox, QSplitter, QStackedLayout, QStackedWidget,
+    QStatusBar, QStyle, QTabBar, QToolButton, QTreeView, QVBoxLayout, QWidget,
 )
 
 from app.engine.file_ops import FileOps
@@ -46,6 +46,68 @@ def _human_size(size: float) -> str:
             return f"{size:,.1f} {unit}" if unit != "B" else f"{int(size)} B"
         size /= 1024
     return f"{size:,.1f} TB"
+
+
+class SingleRenameDialog(QDialog):
+    """名前と拡張子を別フィールドで編集するリネームダイアログ。
+
+    ファイルは「名前」と「拡張子（先頭の . は除く）」を分けて表示する。
+    フォルダや拡張子なしのファイルは拡張子欄を空のまま使える。
+    起動時は名前欄に拡張子を除いた部分を選択した状態でフォーカスする。
+    """
+
+    def __init__(self, old_name: str, is_dir: bool, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("名前の変更")
+        stem, ext = self._split(old_name, is_dir)
+
+        self.name_edit = QLineEdit(stem)
+        self.ext_edit = QLineEdit(ext)
+
+        form = QFormLayout()
+        form.addRow("名前:", self.name_edit)
+        # フォルダは拡張子の概念がないため欄を出さない
+        if not is_dir:
+            form.addRow("拡張子:", self.ext_edit)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+
+        self.name_edit.setFocus()
+        self.name_edit.selectAll()
+
+    @staticmethod
+    def _split(name: str, is_dir: bool) -> tuple[str, str]:
+        """name を (ステム, 拡張子) に分割。先頭ドットのみ等は拡張子扱いしない。"""
+        if is_dir:
+            return name, ""
+        dot = name.rfind(".")
+        if dot <= 0:  # 先頭ドット（.gitignore 等）や拡張子なしは分割しない
+            return name, ""
+        return name[:dot], name[dot + 1:]
+
+    def new_name(self) -> str:
+        """編集後の完全なファイル名を返す。"""
+        stem = self.name_edit.text().strip()
+        ext = self.ext_edit.text().strip().lstrip(".")
+        if ext:
+            return f"{stem}.{ext}"
+        return stem
+
+    @classmethod
+    def get_new_name(cls, old_name: str, is_dir: bool,
+                     parent=None) -> tuple[str, bool]:
+        """(新しい名前, OK押下か) を返す（QInputDialog.getText 互換の使い勝手）。"""
+        dlg = cls(old_name, is_dir, parent)
+        ok = dlg.exec() == QDialog.DialogCode.Accepted
+        return (dlg.new_name() if ok else ""), ok
 
 
 class BreadcrumbBar(QWidget):
@@ -1303,8 +1365,8 @@ class MainWindow(QMainWindow):
                 self.open_rename_dialog()
             return
         old_name = Path(paths[0]).name
-        new_name, ok = QInputDialog.getText(
-            self, "名前の変更", "新しい名前:", text=old_name)
+        new_name, ok = SingleRenameDialog.get_new_name(
+            old_name, Path(paths[0]).is_dir(), self)
         new_name = new_name.strip()
         if not ok or not new_name or new_name == old_name:
             return

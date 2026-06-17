@@ -75,3 +75,39 @@ class TestSingleRename:
         assert (tmp_path / "new.txt").exists()
         ex.undo()
         assert (tmp_path / "old.txt").exists()
+
+
+class TestSingleRenameDialog:
+    def test_split_file_separates_extension(self, qapp):
+        from app.gui.main_window import SingleRenameDialog
+        assert SingleRenameDialog._split("report.final.pdf", False) == (
+            "report.final", "pdf")
+
+    def test_split_no_extension(self, qapp):
+        from app.gui.main_window import SingleRenameDialog
+        assert SingleRenameDialog._split("README", False) == ("README", "")
+
+    def test_split_dotfile_not_extension(self, qapp):
+        from app.gui.main_window import SingleRenameDialog
+        assert SingleRenameDialog._split(".gitignore", False) == (
+            ".gitignore", "")
+
+    def test_split_dir_keeps_dots(self, qapp):
+        from app.gui.main_window import SingleRenameDialog
+        assert SingleRenameDialog._split("my.folder", True) == ("my.folder", "")
+
+    def test_dialog_fields_and_join(self, qapp):
+        from app.gui.main_window import SingleRenameDialog
+        dlg = SingleRenameDialog("photo.jpg", False)
+        assert dlg.name_edit.text() == "photo"
+        assert dlg.ext_edit.text() == "jpg"
+        dlg.name_edit.setText("vacation")
+        dlg.ext_edit.setText("png")
+        assert dlg.new_name() == "vacation.png"
+
+    def test_dir_has_no_ext_field_but_joins_name(self, qapp):
+        from app.gui.main_window import SingleRenameDialog
+        dlg = SingleRenameDialog("docs", True)
+        assert dlg.name_edit.text() == "docs"
+        dlg.name_edit.setText("documents")
+        assert dlg.new_name() == "documents"
