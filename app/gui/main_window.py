@@ -237,7 +237,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Fibro — ファイルエクスプローラー")
+        self.setWindowTitle("Fibro — ファイルブラウザー")
         self.resize(1100, 700)
         self._sel_gen = 0            # 選択世代（古い計算結果を破棄）
         self._sel_count = 0          # 直近の選択件数
