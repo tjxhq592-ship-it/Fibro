@@ -882,74 +882,19 @@ class MainWindow(QMainWindow):
             menu.exec(gpos)
 
     def _build_combined_items(self, paths: list[str]):
-        """統合メニュー上部の Fibro 項目（ノード列）と key→callable を返す。"""
-        from app import clipboard_files
+        """統合メニューに足す Fibro 項目（「お気に入りに追加」のみ）と key→callable。
+
+        シェルの「プロパティ」の直上に挿入される。フォルダ選択時のみ。
+        """
         callables: dict = {}
         items: list = []
-
-        def act(key, label, fn):
-            callables[key] = fn
-            return {"type": "action", "key": key, "label": label}
-
         dirs = [p for p in paths if Path(p).is_dir()]
-        target = dirs[0] if dirs else str(Path(paths[0]).parent)
-
-        items.append(act("open", "開く", lambda: self._open_paths(paths)))
-        # ここで開く（submenu）
-        callables["ow_term"] = lambda: self._open_terminal(target)
-        callables["ow_ps"] = lambda: self._open_in(["powershell.exe"], target)
-        callables["ow_code"] = lambda: self._open_in(["code"], target,
-                                                     shell=True)
-        callables["ow_exp"] = lambda: self._open_in(["explorer.exe"], target)
-        items.append({"type": "submenu", "label": "ここで開く", "items": [
-            {"key": "ow_term", "label": "ターミナル"},
-            {"key": "ow_ps", "label": "PowerShell"},
-            {"key": "ow_code", "label": "VS Code"},
-            {"key": "ow_exp", "label": "エクスプローラー"}]})
-        items.append({"type": "sep"})
-        if len(paths) == 1:
-            items.append(act("rename", "名前の変更", self.rename_single))
-        items.append(act("bulkrename", "一括リネーム…", self.open_rename_dialog))
-        items.append({"type": "sep"})
-        items.append(act("copy", "コピー",
-                         lambda: self._set_clipboard("copy")))
-        items.append(act("cut", "切り取り",
-                         lambda: self._set_clipboard("cut")))
-        if clipboard_files.has_files():
-            items.append(act("paste", "貼り付け", self.paste_clipboard))
-        # 新規作成（submenu）
-        new_items = [{"key": "new_folder", "label": "フォルダー"},
-                     {"key": "new_text", "label": "テキストファイル"}]
-        callables["new_folder"] = self.new_folder
-        callables["new_text"] = self.new_text_file
-        for i, tpl in enumerate(self._templates()):
-            k = f"tpl_{i}"
-            callables[k] = lambda t=tpl: self._new_from_template(t)
-            new_items.append({"key": k, "label": f"雛形: {tpl.name}"})
-        items.append({"type": "submenu", "label": "新規作成",
-                      "items": new_items})
-        items.append({"type": "sep"})
-        items.append(act("pathcopy", "パスをコピー",
-                         lambda: self._copy_paths_to_clipboard(paths)))
-        items.append({"type": "sep"})
-        items.append(act("delete", "削除（ゴミ箱へ）", self.delete_selected))
-        items.append(act("delperm", "完全に削除",
-                         self.delete_selected_permanent))
-        items.append({"type": "sep"})
         fav_target = dirs[0] if dirs else None
         if fav_target:
-            items.append(act("fav", "お気に入りに追加",
-                             lambda: self.favorites.add_favorite(fav_target)))
-        items.append(act("prop", "プロパティ", self.show_properties))
+            callables["fav"] = lambda: self.favorites.add_favorite(fav_target)
+            items.append({"type": "action", "key": "fav",
+                          "label": "お気に入りに追加"})
         return items, callables
-
-    def _templates(self) -> list:
-        """config/templates/ の雛形ファイル一覧。"""
-        try:
-            return sorted(p for p in self._template_dir().iterdir()
-                          if p.is_file())
-        except OSError:
-            return []
 
     def _build_fibro_menu(self, paths: list[str]) -> QMenu:
         """Fibro 自前の QMenu（統合メニュー非対応/失敗時・空白時のフォールバック）。"""

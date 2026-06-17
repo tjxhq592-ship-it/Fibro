@@ -230,31 +230,40 @@ class TestFavoritesAsyncReachability:
 
 class TestCombinedContextMenu:
     def test_build_combined_items(self, qapp, tmp_path, monkeypatch):
-        """統合メニュー上部の Fibro 項目と key→callable を構築できる。"""
+        """統合メニューに足す Fibro 項目は「お気に入りに追加」のみ。
+
+        フォルダ選択時のみ fav を返し、ファイルのみなら空。
+        """
         win = _make_window(tmp_path, monkeypatch)
         f = tmp_path / "a.txt"
         f.write_text("x")
+        d = tmp_path / "sub"
+        d.mkdir()
+        # ファイルのみ: Fibro 項目なし
         items, callables = win._build_combined_items([str(f)])
+        assert items == [] and callables == {}
+        # フォルダ選択: fav のみ
+        items, callables = win._build_combined_items([str(d)])
         keys = {n.get("key") for n in items if n.get("type") == "action"}
-        assert {"open", "copy", "delete", "prop"} <= keys
-        # submenu の key も callable に含まれる
-        assert "ow_term" in callables and "new_folder" in callables
+        assert keys == {"fav"} and "fav" in callables
 
     def test_combined_key_runs_action(self, qapp, tmp_path, monkeypatch):
         """show_combined_menu が key を返したら対応アクションが呼ばれる。"""
         from PySide6.QtCore import QPoint
         import app.shell_menu as sm
         monkeypatch.setattr(sm, "is_supported", lambda: True)
-        # 統合メニューは 'delete' を選んだ体で (True, 'delete') を返す
+        # 統合メニューは 'fav' を選んだ体で (True, 'fav') を返す
         monkeypatch.setattr(sm, "show_combined_menu",
-                            lambda *a, **k: (True, "delete"))
+                            lambda *a, **k: (True, "fav"))
         win = _make_window(tmp_path, monkeypatch)
-        monkeypatch.setattr(win, "selected_paths", lambda: [r"C:\dummy.txt"])
+        d = tmp_path / "sub"
+        d.mkdir()
+        monkeypatch.setattr(win, "selected_paths", lambda: [str(d)])
         fired = []
-        monkeypatch.setattr(win, "delete_selected",
-                            lambda: fired.append(True))
+        monkeypatch.setattr(win.favorites, "add_favorite",
+                            lambda p: fired.append(p))
         win._show_context_menu(QPoint(5, 5))
-        assert fired  # delete_selected が呼ばれた
+        assert fired == [str(d)]  # favorites.add_favorite が呼ばれた
 
     def test_combined_fallback_to_fibro_menu(self, qapp, tmp_path, monkeypatch):
         """show_combined_menu 失敗(False) → 従来 Fibro QMenu にフォールバック。"""

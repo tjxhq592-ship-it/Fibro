@@ -523,22 +523,20 @@ def _combined(hwnd: int, paths: list[str], x: int, y: int,
             return False, None
 
         next_id = FIBRO_ID_BASE
-        pos = 0
 
-        def insert_action(node):
-            nonlocal next_id, pos
+        def insert_action(node, at):
+            nonlocal next_id
             fid = next_id
             next_id += 1
             id_to_key[fid] = node["key"]
             flags = MF_BYPOSITION | MF_STRING
             if not node.get("enabled", True):
                 flags |= MF_GRAYED
-            user32.InsertMenuW(HMENU(hmenu), UINT(pos), UINT(flags),
+            user32.InsertMenuW(HMENU(hmenu), UINT(at), UINT(flags),
                                ctypes.c_size_t(fid), c_wchar_p(node["label"]))
-            pos += 1
 
-        def insert_submenu(node):
-            nonlocal next_id, pos
+        def insert_submenu(node, at):
+            nonlocal next_id
             sub = user32.CreatePopupMenu()
             submenus.append(sub)
             for it in node["items"]:
@@ -547,25 +545,32 @@ def _combined(hwnd: int, paths: list[str], x: int, y: int,
                 id_to_key[fid] = it["key"]
                 user32.AppendMenuW(HMENU(sub), UINT(MF_STRING),
                                    ctypes.c_size_t(fid), c_wchar_p(it["label"]))
-            user32.InsertMenuW(HMENU(hmenu), UINT(pos),
+            user32.InsertMenuW(HMENU(hmenu), UINT(at),
                                UINT(MF_BYPOSITION | MF_POPUP),
                                ctypes.c_size_t(sub), c_wchar_p(node["label"]))
-            pos += 1
 
-        for node in fibro_items:
-            t = node.get("type")
-            if t == "sep":
-                user32.InsertMenuW(HMENU(hmenu), UINT(pos),
-                                   UINT(MF_BYPOSITION | MF_SEPARATOR),
-                                   ctypes.c_size_t(0), None)
-                pos += 1
-            elif t == "submenu":
-                insert_submenu(node)
-            else:
-                insert_action(node)
-        user32.InsertMenuW(HMENU(hmenu), UINT(pos),
-                           UINT(MF_BYPOSITION | MF_SEPARATOR),
-                           ctypes.c_size_t(0), None)
+        if fibro_items:
+            # シェルの「プロパティ」項目の直上に Fibro 項目を挿入する。
+            # 見つからなければ末尾に追加。
+            user32.GetMenuStringW.argtypes = [
+                HMENU, UINT, c_wchar_p, INT, UINT]
+            user32.GetMenuStringW.restype = INT
+            count = user32.GetMenuItemCount(HMENU(hmenu))
+            buf = ctypes.create_unicode_buffer(260)
+            at = count if count > 0 else 0
+            for i in range(count):
+                if user32.GetMenuStringW(HMENU(hmenu), UINT(i), buf, 260,
+                                         UINT(MF_BYPOSITION)) > 0:
+                    t = buf.value
+                    if "プロパティ" in t or "propert" in t.lower():
+                        at = i
+                        break
+            for node in fibro_items:
+                if node.get("type") == "submenu":
+                    insert_submenu(node, at)
+                elif node.get("type") != "sep":
+                    insert_action(node, at)
+                at += 1
 
         user32.SetForegroundWindow(HWND(hwnd))
         user32.TrackPopupMenuEx.restype = INT
