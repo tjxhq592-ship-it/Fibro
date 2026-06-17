@@ -202,6 +202,31 @@ class TestFavoritesAsyncReachability:
         assert "(到達不可)" in sb._items_by_id[ng_fav.id].text(0)
         assert "(到達不可)" not in sb._items_by_id[ok_fav.id].text(0)
 
+    def test_reachable_again_clears_mark(self, qapp, tmp_path):
+        """接続が回復（到達可能化）したら (到達不可) が消える。"""
+        from PySide6.QtCore import QThreadPool
+        from app.models.favorite import FavoriteStore
+        from app.gui.favorites_sidebar import FavoritesSidebar
+        store = FavoriteStore(tmp_path / "f.json")
+        target = tmp_path / "srv"  # 最初は存在しない＝到達不可
+        fav = store.add("srv", str(target))
+        sb = FavoritesSidebar(store)
+        QThreadPool.globalInstance().waitForDone(3000)
+        for _ in range(50):
+            qapp.processEvents()
+            if "(到達不可)" in sb._items_by_id[fav.id].text(0):
+                break
+        assert "(到達不可)" in sb._items_by_id[fav.id].text(0)
+        # 接続回復に相当：パスを作成 → 再チェック
+        target.mkdir()
+        sb._recheck_reachability()
+        QThreadPool.globalInstance().waitForDone(3000)
+        for _ in range(50):
+            qapp.processEvents()
+            if "(到達不可)" not in sb._items_by_id[fav.id].text(0):
+                break
+        assert "(到達不可)" not in sb._items_by_id[fav.id].text(0)
+
 
 class TestNativeContextMenu:
     def _prepare(self, win, monkeypatch, called):

@@ -6,8 +6,8 @@ QTreeWidget でグループ（フォルダ）によるネストを表現。
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QRunnable, Qt, QThreadPool, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QRunnable, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QInputDialog, QLabel, QMenu, QMessageBox, QTreeWidget, QTreeWidgetItem,
     QVBoxLayout, QWidget,
@@ -79,6 +79,12 @@ class FavoritesSidebar(QWidget):
 
         self.refresh()
 
+        # 到達性を定期的に再確認（切断→接続回復時に「(到達不可)」を自動で消す）。
+        self._reach_timer = QTimer(self)
+        self._reach_timer.setInterval(20000)  # 20秒ごと
+        self._reach_timer.timeout.connect(self._recheck_reachability)
+        self._reach_timer.start()
+
     # ---- 表示 ----
     @property
     def list(self):
@@ -146,16 +152,32 @@ class FavoritesSidebar(QWidget):
                 _ReachJob(leaves, self._reach_gen, self._reach_checked.emit))
 
     def _apply_reachability(self, gen: int, fav_id: str, ok: bool) -> None:
-        """非同期チェック結果を反映。到達不可なら灰色＋(到達不可) を付す。"""
-        if gen != self._reach_gen or ok:
-            return  # 古い結果、または到達可能なら何もしない
+        """非同期チェック結果を反映。到達不可なら灰色＋(到達不可)、
+        到達可能なら印を消して既定色へ戻す（接続回復時に追従）。"""
+        if gen != self._reach_gen:
+            return  # 古い結果は破棄
         item = self._items_by_id.get(fav_id)
         if item is None:
             return
-        text = item.text(0)
-        if "(到達不可)" not in text:
-            item.setText(0, text + "  (到達不可)")
-        item.setForeground(0, QColor("#9e9e9e"))
+        fav = next((f for f in self._store.favorites if f.id == fav_id), None)
+        base = (self._label_for(fav) if fav is not None
+                else item.text(0).replace("  (到達不可)", ""))
+        if ok:
+            item.setText(0, base)
+            item.setForeground(0, QBrush())  # 既定色へ戻す
+        else:
+            item.setText(0, base + "  (到達不可)")
+            item.setForeground(0, QColor("#9e9e9e"))
+
+    def _recheck_reachability(self) -> None:
+        """現在のお気に入りの到達性を再確認（定期実行）。回復で印が消える。"""
+        leaves = [(f.id, f.path) for f in self._store.favorites
+                  if not f.is_group and f.path]
+        if not leaves:
+            return
+        self._reach_gen += 1
+        QThreadPool.globalInstance().start(
+            _ReachJob(leaves, self._reach_gen, self._reach_checked.emit))
 
     # ---- 追加 ----
     def add_favorite(self, path: str) -> None:
