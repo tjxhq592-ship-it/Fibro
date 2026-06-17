@@ -393,6 +393,25 @@ class TestRubberBandSelection:
         self._press(table, center)
         assert table.dragEnabled() is True
 
+    def test_press_unselected_item_grabs_no_marquee(
+            self, qapp, tmp_path, monkeypatch):
+        """未選択アイテムの上から押しても、対象をつかめる（範囲選択を始めない）。"""
+        d = tmp_path / "rb6"
+        d.mkdir()
+        (d / "w.txt").write_text("w")
+        win = _make_window(tmp_path, monkeypatch)
+        win.navigate(str(d))
+        for _ in range(50):
+            qapp.processEvents()
+        table = win._active_pane.table
+        table.resize(400, 400)
+        idx = table.model().index(0, 0, table.rootIndex())
+        # 選択しないままアイテム上を押す → ドラッグ有効・マーキー開始点なし
+        center = table.visualRect(idx).center()
+        self._press(table, center)
+        assert table.dragEnabled() is True
+        assert table._marquee_origin is None
+
     def _move(self, view, point, buttons):
         from PySide6.QtCore import QEvent, QPointF, Qt
         from PySide6.QtGui import QMouseEvent

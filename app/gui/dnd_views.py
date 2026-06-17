@@ -111,7 +111,8 @@ class _DropMixin:
             index = self.indexAt(event.position().toPoint())
             sm = self.selectionModel()
             ctrl = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
-            on_selected = (index.isValid() and sm is not None
+            on_item = index.isValid()
+            on_selected = (on_item and sm is not None
                            and sm.isSelected(index))
             if ctrl and on_selected:
                 # Ctrl+「選択済み」アイテム＝コピードラッグ候補。選択は変えずに
@@ -124,12 +125,13 @@ class _DropMixin:
                 self._cdrag_dragged = False
                 event.accept()
                 return
-            # Explorer 流: 選択済みアイテムを押した時だけドラッグ移動を許可。
-            # 空白／未選択アイテムを押した時はドラッグを無効化して、
-            # ラバーバンド（範囲）選択を開始できるようにする。
-            self.setDragEnabled(bool(on_selected))
-            # 範囲選択の開始点を記録（ドラッグ移動でない時だけ自前マーキー対象）。
-            if self._draw_marquee and not on_selected:
+            # ファイル名/フォルダ名（＝有効なアイテム）の上から押したら、その対象を
+            # つかんでドラッグできるようにする。未選択アイテムは super が押下時に
+            # 選択するので、移動開始時にはその対象がドラッグされる。空白の上から
+            # 押した時だけドラッグを無効化し、ラバーバンド（範囲）選択を開始する。
+            self.setDragEnabled(on_item)
+            # 範囲選択の開始点を記録（空白から押した時だけ自前マーキー対象）。
+            if self._draw_marquee and not on_item:
                 self._marquee_origin = event.position().toPoint()
             else:
                 self._marquee_origin = None
