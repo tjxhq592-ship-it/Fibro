@@ -29,25 +29,34 @@ def _process_events(ms=300):
 
 class TestWildcardSearch:
     def test_wildcard_pattern(self, tmp_path):
+        """* を含むキーワードは自動でパターン照合になる。"""
         (tmp_path / "readme.md").write_text("x")
         (tmp_path / "notes.txt").write_text("x")
-        opts = SearchOptions(keyword="*.md", modes={SearchMode.FILENAME},
-                             use_wildcard=True)
+        opts = SearchOptions(keyword="*.md", modes={SearchMode.FILENAME})
         hits = [h.path for h in search(tmp_path, opts)]
         assert hits == [str(tmp_path / "readme.md")]
 
     def test_wildcard_prefix(self, tmp_path):
         (tmp_path / "file_a.txt").write_text("x")
         (tmp_path / "other.txt").write_text("x")
-        opts = SearchOptions(keyword="file_*.txt",
-                             modes={SearchMode.FILENAME}, use_wildcard=True)
+        opts = SearchOptions(keyword="file_*.txt", modes={SearchMode.FILENAME})
         assert len(list(search(tmp_path, opts))) == 1
 
-    def test_wildcard_off_is_substring(self, tmp_path):
+    def test_question_mark_is_wildcard(self, tmp_path):
+        """? を含むキーワードも自動でパターン照合になる。"""
+        (tmp_path / "a1.txt").write_text("x")
+        (tmp_path / "a12.txt").write_text("x")
+        opts = SearchOptions(keyword="a?.txt", modes={SearchMode.FILENAME})
+        hits = [h.path for h in search(tmp_path, opts)]
+        assert hits == [str(tmp_path / "a1.txt")]
+
+    def test_plain_keyword_is_substring(self, tmp_path):
+        """* や ? を含まないキーワードは従来どおり部分一致。"""
         (tmp_path / "readme.md").write_text("x")
-        opts = SearchOptions(keyword="*.md", modes={SearchMode.FILENAME},
-                             use_wildcard=False)
-        assert list(search(tmp_path, opts)) == []  # リテラル "*.md" は不一致
+        (tmp_path / "notes.txt").write_text("x")
+        opts = SearchOptions(keyword="read", modes={SearchMode.FILENAME})
+        hits = [h.path for h in search(tmp_path, opts)]
+        assert hits == [str(tmp_path / "readme.md")]
 
 
 class TestFilterBox:

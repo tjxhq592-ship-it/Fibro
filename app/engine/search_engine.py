@@ -32,13 +32,22 @@ class SearchMode(Enum):
     EXCEL = "excel"
 
 
+def is_wildcard(keyword: str) -> bool:
+    """キーワードがワイルドカードパターンか。
+
+    `*` `?` は Windows のファイル名に使えない文字なので、含まれていれば
+    パターン照合（fnmatch）、含まれなければ部分一致とみなす。これにより
+    ワイルドカードの ON/OFF を自動判定でき、ユーザー設定が不要になる。
+    """
+    return "*" in keyword or "?" in keyword
+
+
 @dataclass
 class SearchOptions:
     keyword: str
     modes: set[SearchMode] = field(
         default_factory=lambda: {SearchMode.FILENAME})
     case_sensitive: bool = False
-    use_wildcard: bool = False   # ファイル名を fnmatch（*.md 等）で照合
     recursive: bool = True
     extensions: set[str] | None = None   # None = モード既定に従う
     max_file_size: int = DEFAULT_MAX_SIZE
@@ -99,7 +108,7 @@ def search(root: str | Path, options: SearchOptions,
         ext = os.path.splitext(name)[1].lower()
 
         if SearchMode.FILENAME in options.modes:
-            if options.use_wildcard:
+            if is_wildcard(keyword):
                 # fnmatch は大文字小文字を区別しない（Windows流儀）
                 matched = fnmatch.fnmatch(name, keyword)
             else:

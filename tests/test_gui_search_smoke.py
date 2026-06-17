@@ -107,7 +107,6 @@ def test_search_options_persist_across_restart(qapp, tmp_path):
     # セッション1: オプションを変更
     tm1 = ThemeManager(settings_file)
     panel1 = SearchPanel(settings=tm1)
-    panel1.wildcard_check.setChecked(True)
     panel1.recursive_check.setChecked(False)
     panel1.index_check.setChecked(True)
 
@@ -117,7 +116,6 @@ def test_search_options_persist_across_restart(qapp, tmp_path):
     # セッション2: 新しい ThemeManager でディスクから読み直す
     tm2 = ThemeManager(settings_file)
     panel2 = SearchPanel(settings=tm2)
-    assert panel2.wildcard_check.isChecked() is True
     assert panel2.recursive_check.isChecked() is False
     assert panel2.index_check.isChecked() is True
     # layout も残っていること（相互上書きが起きない）

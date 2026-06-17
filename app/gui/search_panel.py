@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 
 from app.engine.index_engine import SearchIndex
 from app.engine.search_engine import (
-    SearchHit, SearchMode, SearchOptions, SearchStats, search,
+    SearchHit, SearchMode, SearchOptions, SearchStats, is_wildcard, search,
 )
 from app.paths import INDEX_DB
 
@@ -103,7 +103,7 @@ class SearchPanel(QWidget):
         self._build_ui()
         self._load_options()  # 保存されたオプションを復元（signal 接続前）
         # 復元後に signal 接続 → 以降のユーザー変更だけが保存される
-        for check in (self.wildcard_check, self.recursive_check, self.index_check):
+        for check in (self.recursive_check, self.index_check):
             check.stateChanged.connect(self.save_options)
         # インクリメンタル検索（ファイル名モードのみ、デバウンス400ms）
         self._debounce = QTimer(self, singleShot=True, interval=400)
@@ -149,18 +149,18 @@ class SearchPanel(QWidget):
         layout.addLayout(modes)
 
         opts_row = QHBoxLayout()
-        self.wildcard_check = QCheckBox("ワイルドカード (*.md 等)")
-        self.wildcard_check.setToolTip(
-            "ファイル名を *.md / file_*.txt などのパターンで照合")
         self.recursive_check = QCheckBox("サブフォルダーも検索")
         self.index_check = QCheckBox("高速インデックス")
         self.index_check.setToolTip(
             "ファイル名検索を SQLite FTS5 インデックスで高速化。\n"
             "初回と10分経過後は自動で再構築します。\n"
             "（ファイル名モードのみ・ワイルドカード/サブフォルダOFFとは併用不可）")
+        # キーワードに * や ? があれば自動でワイルドカード照合（設定不要）。
+        self.keyword_edit.setToolTip(
+            "部分一致で検索。* や ? を含めると *.md / file_?.txt などの"
+            "パターン照合になります。")
         # デフォルト値。signal 接続は _load_options() の後（__init__）で行う。
         self.recursive_check.setChecked(True)
-        opts_row.addWidget(self.wildcard_check)
         opts_row.addWidget(self.recursive_check)
         opts_row.addWidget(self.index_check)
         opts_row.addStretch()
@@ -203,7 +203,6 @@ class SearchPanel(QWidget):
             keyword=self.keyword_edit.text().strip(),
             modes=modes or {SearchMode.FILENAME},
             case_sensitive=self.case_check.isChecked(),
-            use_wildcard=self.wildcard_check.isChecked(),
             recursive=self.recursive_check.isChecked(),
         )
 
@@ -217,10 +216,11 @@ class SearchPanel(QWidget):
         self.search_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
 
-        # インデックスは「ファイル名のみ・通常一致・再帰」のときだけ有効
+        # インデックスは「ファイル名のみ・通常一致（ワイルドカード無し）・再帰」
+        # のときだけ有効
         use_index = (self.index_check.isChecked()
                      and options.modes == {SearchMode.FILENAME}
-                     and not options.use_wildcard
+                     and not is_wildcard(options.keyword)
                      and not options.case_sensitive
                      and options.recursive)
         self._worker = SearchWorker(self._root, options, use_index, self)
@@ -271,7 +271,6 @@ class SearchPanel(QWidget):
         if self._settings is None:
             return
         search_opts = self._settings.get("search_options", {}) or {}
-        self.wildcard_check.setChecked(search_opts.get("wildcard", False))
         self.recursive_check.setChecked(search_opts.get("recursive", True))
         self.index_check.setChecked(search_opts.get("use_index", False))
 
@@ -280,7 +279,6 @@ class SearchPanel(QWidget):
         if self._settings is None:
             return
         self._settings.set("search_options", {
-            "wildcard": self.wildcard_check.isChecked(),
             "recursive": self.recursive_check.isChecked(),
             "use_index": self.index_check.isChecked(),
         })
