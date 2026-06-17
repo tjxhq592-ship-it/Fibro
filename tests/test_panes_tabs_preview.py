@@ -312,6 +312,24 @@ class TestToolbarRemovalAndShortcuts:
                   for a in m.actions()]
         assert any("テーマ" in t for t in labels)
 
+    def test_help_menu_present(self, qapp, tmp_path, monkeypatch):
+        """ヘルプメニューにバグ報告と About がある。"""
+        from PySide6.QtWidgets import QMenu
+        win = _make_window(tmp_path, monkeypatch)
+        menus = {m.title(): m for m in win.menuBar().findChildren(QMenu)}
+        assert "ヘルプ" in menus
+        labels = [a.text() for a in menus["ヘルプ"].actions()]
+        assert any("バグ" in t for t in labels)
+        assert any("について" in t for t in labels)
+
+    def test_issues_url_and_version(self, qapp, tmp_path, monkeypatch):
+        """バグ報告 URL とバージョン定数が想定どおり。"""
+        from app import __version__
+        win = _make_window(tmp_path, monkeypatch)
+        assert win._ISSUES_URL == \
+            "https://github.com/tjxhq592-ship-it/release/issues"
+        assert __version__
+
     def test_no_scroll_button_gap(self, qapp, tmp_path, monkeypatch):
         """タブと「＋」の間にスクロールボタン予約の隙間が無いこと。"""
         win = _make_window(tmp_path, monkeypatch)

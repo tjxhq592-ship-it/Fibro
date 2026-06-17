@@ -725,6 +725,34 @@ class MainWindow(QMainWindow):
         self.winekey_action.setEnabled(winekey.is_supported())
         self.winekey_action.toggled.connect(self._toggle_winekey)
 
+        help_menu = menubar.addMenu("ヘルプ")
+        help_menu.addAction("バグを報告…", self._report_bug)
+        help_menu.addSeparator()
+        help_menu.addAction("Fibro について…", self._show_about)
+
+    # バグ報告先（GitHub Issues）
+    _ISSUES_URL = "https://github.com/tjxhq592-ship-it/release/issues"
+
+    def _report_bug(self) -> None:
+        """既定ブラウザで GitHub の Issues ページを開く。"""
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtCore import QUrl
+        QDesktopServices.openUrl(QUrl(self._ISSUES_URL))
+
+    def _show_about(self) -> None:
+        """バージョン情報ダイアログ。"""
+        import platform
+        from PySide6 import __version__ as pyside_version
+        from app import __version__ as app_version
+        QMessageBox.about(
+            self, "Fibro について",
+            f"<b>Fibro — ファイルブラウザー</b><br>"
+            f"バージョン {app_version}<br><br>"
+            f"Python {platform.python_version()}・"
+            f"PySide6 {pyside_version}<br>"
+            f"{platform.system()} {platform.release()}<br><br>"
+            f"バグ報告: <a href='{self._ISSUES_URL}'>{self._ISSUES_URL}</a>")
+
     def _toggle_winekey(self, checked: bool) -> None:
         """Win+E オーバーライドの ON/OFF（レジストリ書換）。"""
         from app import winekey
