@@ -228,51 +228,57 @@ class TestFavoritesAsyncReachability:
         assert "(到達不可)" not in sb._items_by_id[fav.id].text(0)
 
 
-class TestNativeContextMenu:
-    def _prepare(self, win, monkeypatch, called):
-        """選択を固定で返し、QMenu がモーダルでブロックしないようにする（決定論的）。"""
-        import app.gui.main_window as mw
-        from PySide6.QtWidgets import QMenu
-        monkeypatch.setattr(win, "selected_paths", lambda: [r"C:\dummy.txt"])
-        monkeypatch.setattr(
-            win, "_show_shell_menu",
-            lambda paths, gpos: called.setdefault("p", paths) or True)
+class TestCombinedContextMenu:
+    def test_build_combined_items(self, qapp, tmp_path, monkeypatch):
+        """統合メニュー上部の Fibro 項目と key→callable を構築できる。"""
+        win = _make_window(tmp_path, monkeypatch)
+        f = tmp_path / "a.txt"
+        f.write_text("x")
+        items, callables = win._build_combined_items([str(f)])
+        keys = {n.get("key") for n in items if n.get("type") == "action"}
+        assert {"open", "copy", "delete", "prop"} <= keys
+        # submenu の key も callable に含まれる
+        assert "ow_term" in callables and "new_folder" in callables
 
-        # 従来メニュー経路に入っても exec() でブロックしないサブクラスに差し替え
-        # （C++ メソッドの文字列パッチは効かないためクラス自体を置換）。
-        class _NoExecMenu(QMenu):
-            def exec(self, *a):  # noqa: A003
-                return None
-        monkeypatch.setattr(mw, "QMenu", _NoExecMenu)
-
-    def test_native_on_calls_shell_menu(self, qapp, tmp_path, monkeypatch):
-        """設定 ON＋選択あり → ネイティブメニュー（_show_shell_menu）が呼ばれる。"""
+    def test_combined_key_runs_action(self, qapp, tmp_path, monkeypatch):
+        """show_combined_menu が key を返したら対応アクションが呼ばれる。"""
         from PySide6.QtCore import QPoint
         import app.shell_menu as sm
         monkeypatch.setattr(sm, "is_supported", lambda: True)
+        # 統合メニューは 'delete' を選んだ体で (True, 'delete') を返す
+        monkeypatch.setattr(sm, "show_combined_menu",
+                            lambda *a, **k: (True, "delete"))
         win = _make_window(tmp_path, monkeypatch)
-        win.theme_manager.set("native_context_menu", True)
-        called = {}
-        self._prepare(win, monkeypatch, called)
+        monkeypatch.setattr(win, "selected_paths", lambda: [r"C:\dummy.txt"])
+        fired = []
+        monkeypatch.setattr(win, "delete_selected",
+                            lambda: fired.append(True))
         win._show_context_menu(QPoint(5, 5))
-        assert called.get("p")  # ネイティブ経路に入った
+        assert fired  # delete_selected が呼ばれた
 
-    def test_native_off_uses_fibro_menu(self, qapp, tmp_path, monkeypatch):
-        """設定 OFF → ネイティブを呼ばず従来メニュー経路。"""
+    def test_combined_fallback_to_fibro_menu(self, qapp, tmp_path, monkeypatch):
+        """show_combined_menu 失敗(False) → 従来 Fibro QMenu にフォールバック。"""
         from PySide6.QtCore import QPoint
+        import app.shell_menu as sm
+        import app.gui.main_window as mw
+        from PySide6.QtWidgets import QMenu
+        monkeypatch.setattr(sm, "is_supported", lambda: True)
+        monkeypatch.setattr(sm, "show_combined_menu",
+                            lambda *a, **k: (False, None))
         win = _make_window(tmp_path, monkeypatch)
-        win.theme_manager.set("native_context_menu", False)
-        called = {}
-        self._prepare(win, monkeypatch, called)
-        win._show_context_menu(QPoint(5, 5))
-        assert "p" not in called
+        monkeypatch.setattr(win, "selected_paths", lambda: [r"C:\dummy.txt"])
+        built = []
+        orig = win._build_fibro_menu
 
-    def test_toggle_persists(self, qapp, tmp_path, monkeypatch):
-        win = _make_window(tmp_path, monkeypatch)
-        win._toggle_native_menu(False)
-        assert win.theme_manager.get("native_context_menu") is False
-        win._toggle_native_menu(True)
-        assert win.theme_manager.get("native_context_menu") is True
+        class _NoExecMenu(QMenu):
+            def exec(self, *a):
+                return None
+        monkeypatch.setattr(mw, "QMenu", _NoExecMenu)
+        monkeypatch.setattr(
+            win, "_build_fibro_menu",
+            lambda paths: built.append(True) or orig(paths))
+        win._show_context_menu(QPoint(5, 5))
+        assert built  # フォールバックで Fibro メニューを構築した
 
 
 class TestToolbarRemovalAndShortcuts:

@@ -98,6 +98,17 @@ def test_shell_menu_empty_paths_returns_false():
     assert shell_menu.show_shell_context_menu(0, [], 0, 0) is False
 
 
+def test_drag_drop_menu_guards():
+    """右ドラッグメニュー: 空 paths / 空 dest は False。"""
+    assert shell_menu.show_drag_drop_menu(0, [], "C:\\", 0, 0) is False
+    assert shell_menu.show_drag_drop_menu(0, [r"C:\x.txt"], "", 0, 0) is False
+
+
+def test_combined_menu_guards():
+    """統合メニュー: 空 paths は (False, None)（例外を出さない）。"""
+    assert shell_menu.show_combined_menu(0, [], 0, 0, []) == (False, None)
+
+
 def test_shell_menu_builds_menu_for_forward_slash_path(tmp_path):
     """スラッシュ区切り（QFileSystemModel 形式）でもメニューを構築できる。
 

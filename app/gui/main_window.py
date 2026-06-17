@@ -654,15 +654,7 @@ class MainWindow(QMainWindow):
                                 self.toggle_theme)
         settings_menu.addAction("初期ディレクトリを設定…",
                                 self._set_initial_directory)
-        # 右クリックを Windows 標準メニューにする（選択時）
-        from app import shell_menu
-        self.native_menu_action = settings_menu.addAction(
-            "Windows 標準の右クリックメニューを使う")
-        self.native_menu_action.setCheckable(True)
-        self.native_menu_action.setChecked(
-            self.theme_manager.get("native_context_menu", True))
-        self.native_menu_action.setEnabled(shell_menu.is_supported())
-        self.native_menu_action.toggled.connect(self._toggle_native_menu)
+        # 右クリックは Fibro固有＋シェル拡張(7-Zip等)の統合メニュー（常時）。
         # Win+E オーバーライド（HKCU レジストリ・トグル可）
         from app import winekey
         self.winekey_action = settings_menu.addAction("標準フォルダのオーバーライド")
@@ -670,13 +662,6 @@ class MainWindow(QMainWindow):
         self.winekey_action.setChecked(winekey.is_enabled())
         self.winekey_action.setEnabled(winekey.is_supported())
         self.winekey_action.toggled.connect(self._toggle_winekey)
-
-    def _toggle_native_menu(self, checked: bool) -> None:
-        """右クリックを Windows 標準メニューにするかを保存。"""
-        self.theme_manager.set("native_context_menu", checked)
-        self.statusBar().showMessage(
-            "右クリック: Windows 標準メニュー" if checked
-            else "右クリック: Fibro メニュー", 3000)
 
     def _toggle_winekey(self, checked: bool) -> None:
         """Win+E オーバーライドの ON/OFF（レジストリ書換）。"""
@@ -879,14 +864,96 @@ class MainWindow(QMainWindow):
                 < 0.6):
             return
         paths = self.selected_paths()
-        # Windows 標準メニュー設定が ON かつ選択ありなら、ネイティブのシェル
-        # コンテキストメニューを主メニューとして表示する（失敗時は従来メニューへ）。
-        if paths and self.theme_manager.get("native_context_menu", True):
+        gpos = self._active_view().viewport().mapToGlobal(pos)
+        # 選択あり: Fibro固有＋シェル拡張(7-Zip等)の統合メニューを表示。
+        if paths:
             from app import shell_menu
             if shell_menu.is_supported():
-                gpos = self._active_view().viewport().mapToGlobal(pos)
-                if self._show_shell_menu(paths, gpos):
-                    return
+                items, callables = self._build_combined_items(paths)
+                ok, key = shell_menu.show_combined_menu(
+                    int(self.winId()), paths, gpos.x(), gpos.y(), items)
+                if ok:
+                    if key and key in callables:
+                        callables[key]()
+                    return  # シェル項目実行/キャンセルも含めここで終了
+        # 非対応 or 失敗 or 選択なし → Fibro 自前メニュー
+        menu = self._build_fibro_menu(paths)
+        if menu.actions():
+            menu.exec(gpos)
+
+    def _build_combined_items(self, paths: list[str]):
+        """統合メニュー上部の Fibro 項目（ノード列）と key→callable を返す。"""
+        from app import clipboard_files
+        callables: dict = {}
+        items: list = []
+
+        def act(key, label, fn):
+            callables[key] = fn
+            return {"type": "action", "key": key, "label": label}
+
+        dirs = [p for p in paths if Path(p).is_dir()]
+        target = dirs[0] if dirs else str(Path(paths[0]).parent)
+
+        items.append(act("open", "開く", lambda: self._open_paths(paths)))
+        # ここで開く（submenu）
+        callables["ow_term"] = lambda: self._open_terminal(target)
+        callables["ow_ps"] = lambda: self._open_in(["powershell.exe"], target)
+        callables["ow_code"] = lambda: self._open_in(["code"], target,
+                                                     shell=True)
+        callables["ow_exp"] = lambda: self._open_in(["explorer.exe"], target)
+        items.append({"type": "submenu", "label": "ここで開く", "items": [
+            {"key": "ow_term", "label": "ターミナル"},
+            {"key": "ow_ps", "label": "PowerShell"},
+            {"key": "ow_code", "label": "VS Code"},
+            {"key": "ow_exp", "label": "エクスプローラー"}]})
+        items.append({"type": "sep"})
+        if len(paths) == 1:
+            items.append(act("rename", "名前の変更", self.rename_single))
+        items.append(act("bulkrename", "一括リネーム…", self.open_rename_dialog))
+        items.append({"type": "sep"})
+        items.append(act("copy", "コピー",
+                         lambda: self._set_clipboard("copy")))
+        items.append(act("cut", "切り取り",
+                         lambda: self._set_clipboard("cut")))
+        if clipboard_files.has_files():
+            items.append(act("paste", "貼り付け", self.paste_clipboard))
+        # 新規作成（submenu）
+        new_items = [{"key": "new_folder", "label": "フォルダー"},
+                     {"key": "new_text", "label": "テキストファイル"}]
+        callables["new_folder"] = self.new_folder
+        callables["new_text"] = self.new_text_file
+        for i, tpl in enumerate(self._templates()):
+            k = f"tpl_{i}"
+            callables[k] = lambda t=tpl: self._new_from_template(t)
+            new_items.append({"key": k, "label": f"雛形: {tpl.name}"})
+        items.append({"type": "submenu", "label": "新規作成",
+                      "items": new_items})
+        items.append({"type": "sep"})
+        items.append(act("pathcopy", "パスをコピー",
+                         lambda: self._copy_paths_to_clipboard(paths)))
+        items.append({"type": "sep"})
+        items.append(act("delete", "削除（ゴミ箱へ）", self.delete_selected))
+        items.append(act("delperm", "完全に削除",
+                         self.delete_selected_permanent))
+        items.append({"type": "sep"})
+        fav_target = dirs[0] if dirs else None
+        if fav_target:
+            items.append(act("fav", "お気に入りに追加",
+                             lambda: self.favorites.add_favorite(fav_target)))
+        items.append(act("prop", "プロパティ", self.show_properties))
+        return items, callables
+
+    def _templates(self) -> list:
+        """config/templates/ の雛形ファイル一覧。"""
+        try:
+            return sorted(p for p in self._template_dir().iterdir()
+                          if p.is_file())
+        except OSError:
+            return []
+
+    def _build_fibro_menu(self, paths: list[str]) -> QMenu:
+        """Fibro 自前の QMenu（統合メニュー非対応/失敗時・空白時のフォールバック）。"""
+        from app import clipboard_files
         menu = QMenu(self)
         if paths:
             menu.addAction("開く", lambda: self._open_paths(paths))
@@ -898,10 +965,8 @@ class MainWindow(QMainWindow):
             menu.addSeparator()
             menu.addAction("コピー\tCtrl+C", lambda: self._set_clipboard("copy"))
             menu.addAction("切り取り\tCtrl+X", lambda: self._set_clipboard("cut"))
-        from app import clipboard_files
         if clipboard_files.has_files():
             menu.addAction("貼り付け\tCtrl+V", self.paste_clipboard)
-        # 新規作成（空白部分でも選択中でも使えるようカレント直下に作成）
         new_menu = menu.addMenu("新規作成")
         new_menu.addAction("フォルダー\tCtrl+Shift+N", self.new_folder)
         new_menu.addAction("テキストファイル", self.new_text_file)
@@ -924,17 +989,7 @@ class MainWindow(QMainWindow):
                            lambda: self.favorites.add_favorite(fav_target))
         if paths:
             menu.addAction("プロパティ", self.show_properties)
-            # ネイティブメニューが主のとき（設定 ON）は重複するので出さない。
-            from app import shell_menu
-            if (shell_menu.is_supported()
-                    and not self.theme_manager.get("native_context_menu", True)):
-                menu.addSeparator()
-                gpos = self._active_view().viewport().mapToGlobal(pos)
-                menu.addAction(
-                    "その他のオプション（Windows）",
-                    lambda: self._show_shell_menu(paths, gpos))
-        if menu.actions():
-            menu.exec(self._active_view().viewport().mapToGlobal(pos))
+        return menu
 
     def _show_shell_menu(self, paths: list[str], gpos) -> bool:
         """選択ファイルの Windows シェルコンテキストメニューを表示。成功で True。"""
