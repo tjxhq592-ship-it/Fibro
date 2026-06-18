@@ -11,9 +11,9 @@ from pathlib import Path
 
 from PySide6.QtCore import (
     QItemSelection, QItemSelectionModel, QMimeData, QModelIndex, QPoint, QRect,
-    QSortFilterProxyModel, Qt, QUrl, Signal,
+    QSize, QSortFilterProxyModel, Qt, QUrl, Signal,
 )
-from PySide6.QtGui import QDrag
+from PySide6.QtGui import QColor, QDrag, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QListView, QRubberBand, QTableView,
     QTreeView,
@@ -33,6 +33,50 @@ def _file_path(model, index: QModelIndex) -> str:
 
 def _urls_to_paths(mime: QMimeData) -> list[str]:
     return [u.toLocalFile() for u in mime.urls() if u.isLocalFile()]
+
+
+def _make_drag_pixmap(view, indexes: list[QModelIndex]) -> QPixmap:
+    """ドラッグ中にカーソルへ付く半透明アイコンを作る（Explorer 風）。
+
+    先頭アイテムの種別/サムネアイコンを使い、複数選択時は右下に件数バッジを描く。
+    """
+    model = view.model()
+    icon = None
+    if indexes:
+        data = model.data(indexes[0].siblingAtColumn(0),
+                          Qt.ItemDataRole.DecorationRole)
+        if isinstance(data, QIcon):
+            icon = data
+    size = 48
+    base = (icon.pixmap(QSize(size, size)) if icon is not None
+            else QPixmap(size, size))
+    if base.isNull() or base.width() == 0:
+        base = QPixmap(size, size)
+        base.fill(QColor(120, 120, 120))
+    pixmap = QPixmap(base.size())
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setOpacity(0.65)  # 半透明
+    painter.drawPixmap(0, 0, base)
+    count = len(indexes)
+    if count > 1:
+        painter.setOpacity(1.0)
+        badge = str(count) if count < 100 else "99+"
+        font = QFont(view.font())
+        font.setBold(True)
+        painter.setFont(font)
+        rect = painter.fontMetrics().boundingRect(badge)
+        w = max(rect.width() + 10, 18)
+        h = 18
+        x = pixmap.width() - w
+        y = pixmap.height() - h
+        painter.setBrush(QColor("#3d7eff"))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(x, y, w, h, 9, 9)
+        painter.setPen(QColor("white"))
+        painter.drawText(QRect(x, y, w, h), Qt.AlignmentFlag.AlignCenter, badge)
+    painter.end()
+    return pixmap
 
 
 def _drop_view_at(global_pos):
@@ -225,6 +269,11 @@ class _DropMixin:
         mime.setData(_COPY_DRAG_MIME, b"1")  # コピー意図 marker
         drag = QDrag(self)
         drag.setMimeData(mime)
+        sm = self.selectionModel()
+        if sm is not None:
+            pm = _make_drag_pixmap(self, sm.selectedRows(0))
+            drag.setPixmap(pm)
+            drag.setHotSpot(QPoint(pm.width() // 2, pm.height() // 2))
         drag.exec(Qt.DropAction.CopyAction | Qt.DropAction.MoveAction,
                   Qt.DropAction.CopyAction)
 
@@ -402,6 +451,9 @@ class FileTableView(_DropMixin, QTableView):
                       for i in indexes])
         drag = QDrag(self)
         drag.setMimeData(mime)
+        pm = _make_drag_pixmap(self, indexes)
+        drag.setPixmap(pm)
+        drag.setHotSpot(QPoint(pm.width() // 2, pm.height() // 2))
         drag.exec(Qt.DropAction.MoveAction | Qt.DropAction.CopyAction)
 
 
@@ -479,4 +531,7 @@ class FileIconView(_DropMixin, QListView):
                       for i in indexes])
         drag = QDrag(self)
         drag.setMimeData(mime)
+        pm = _make_drag_pixmap(self, indexes)
+        drag.setPixmap(pm)
+        drag.setHotSpot(QPoint(pm.width() // 2, pm.height() // 2))
         drag.exec(Qt.DropAction.MoveAction | Qt.DropAction.CopyAction)

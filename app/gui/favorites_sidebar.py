@@ -38,11 +38,36 @@ class _ReachJob(QRunnable):
 
 
 class _FavTree(QTreeWidget):
-    """ドロップ完了を通知する QTreeWidget。"""
+    """ドロップ完了を通知する QTreeWidget。
+
+    内部移動（並べ替え）に加え、ファイル一覧などからの外部ドロップ
+    （text/uri-list）を受けてお気に入り登録できるようにする。
+    """
 
     dropped = Signal()
+    urls_dropped = Signal(list, object)  # paths, ドロップ先 item（group or None）
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802 — Qt API
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802 — Qt API
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
 
     def dropEvent(self, event) -> None:  # noqa: N802 — Qt API
+        mime = event.mimeData()
+        if mime.hasUrls():
+            paths = [u.toLocalFile() for u in mime.urls() if u.isLocalFile()]
+            target = self.itemAt(event.position().toPoint())
+            if paths:
+                self.urls_dropped.emit(paths, target)
+            event.acceptProposedAction()
+            return
         super().dropEvent(event)
         self.dropped.emit()
 
@@ -65,7 +90,9 @@ class FavoritesSidebar(QWidget):
         self.tree = _FavTree()
         self.tree.setHeaderHidden(True)
         self.tree.setDragDropMode(QTreeWidget.DragDropMode.InternalMove)
+        self.tree.setAcceptDrops(True)  # 外部（ファイル一覧）からの登録ドロップ用
         self.tree.dropped.connect(self._persist_structure)
+        self.tree.urls_dropped.connect(self._on_urls_dropped)
         self.tree.itemClicked.connect(self._on_clicked)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._show_menu)
@@ -194,6 +221,28 @@ class FavoritesSidebar(QWidget):
         parent_id = self._selected_group_id()
         self._store.add(label.strip(), path, parent_id=parent_id)
         self.refresh()
+
+    def _on_urls_dropped(self, paths: list[str], target) -> None:
+        """ファイル一覧などからドロップされたパスをお気に入りに登録する。
+
+        ドロップ先がグループならその配下、そうでなければトップ階層へ。
+        表示名は付け足し入力なしでファイル/フォルダ名を使い、複数まとめて登録。
+        重複（同一パス）はスキップする。
+        """
+        from pathlib import Path as P
+        parent_id = ""
+        if target is not None:
+            fav = self._fav_for_item(target)
+            if fav is not None and fav.is_group:
+                parent_id = fav.id
+        added = 0
+        for path in paths:
+            if not path or self._store.find_by_path(path):
+                continue
+            self._store.add(P(path).name or path, path, parent_id=parent_id)
+            added += 1
+        if added:
+            self.refresh()
 
     def _add_group(self, parent_id: str = "") -> None:
         label, ok = QInputDialog.getText(

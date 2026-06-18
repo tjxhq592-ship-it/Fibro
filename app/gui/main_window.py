@@ -424,6 +424,12 @@ class MainWindow(QMainWindow):
         self._left_splitter = left
         self._restore_layout()
 
+        # 各パネルの Ctrl+ホイール ズーム（75〜200%・倍率は settings に保存）
+        from app.gui.zoom import ZoomController
+        ZoomController(self.favorites.tree, "favorites", self.theme_manager)
+        ZoomController(self.recent_sidebar.tree, "recent", self.theme_manager)
+        ZoomController(self.tree, "folder_tree", self.theme_manager)
+
         # 検索ドックは初回 Ctrl+F まで作らない（起動を速く保つ。SearchPanel は
         # 検索エンジン等を引き込み import が重いため遅延生成）。
         self.search_panel = None
@@ -462,6 +468,10 @@ class MainWindow(QMainWindow):
         pane.activated.connect(self._set_active_pane)
         pane.list_model.directoryLoaded.connect(
             lambda p, pn=pane: self._on_directory_loaded(pn, p))
+        # ファイル一覧（詳細ビュー）の Ctrl+ホイール ズーム。タブ間で同じ
+        # キーを共有し、保存倍率を各ペインが読み込む。
+        from app.gui.zoom import ZoomController
+        ZoomController(pane.table, "filelist", self.theme_manager)
         return pane
 
     def _on_directory_loaded(self, pane: FilePane, path: str) -> None:

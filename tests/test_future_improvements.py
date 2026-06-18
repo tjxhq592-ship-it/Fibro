@@ -109,6 +109,69 @@ class TestFavoritesReorder:
             QTreeWidget.DragDropMode.InternalMove
 
 
+class TestFavoritesDropRegister:
+    def test_drop_registers_paths_at_top(self, qapp, tmp_path):
+        """外部ドロップでパスがトップ階層に登録される（重複はスキップ）。"""
+        d1 = tmp_path / "alpha"
+        d2 = tmp_path / "beta"
+        d1.mkdir()
+        d2.mkdir()
+        store = FavoriteStore(tmp_path / "f.json")
+        sidebar = FavoritesSidebar(store)
+        sidebar._on_urls_dropped([str(d1), str(d2), str(d1)], None)
+        labels = [f.label for f in store.favorites if not f.is_group]
+        assert labels == ["alpha", "beta"]  # 重複 d1 はスキップ
+        assert all(f.parent_id == "" for f in store.favorites)
+
+    def test_drop_onto_group_nests(self, qapp, tmp_path):
+        """グループの上にドロップするとその配下に登録される。"""
+        d = tmp_path / "gamma"
+        d.mkdir()
+        store = FavoriteStore(tmp_path / "f.json")
+        gid = store.add_group("グループ").id
+        sidebar = FavoritesSidebar(store)
+        target = sidebar._items_by_id[gid]
+        sidebar._on_urls_dropped([str(d)], target)
+        leaf = next(f for f in store.favorites if not f.is_group)
+        assert leaf.parent_id == gid
+        assert leaf.label == "gamma"
+
+    def test_tree_accepts_drops(self, qapp, tmp_path):
+        sidebar = FavoritesSidebar(FavoriteStore(tmp_path / "f.json"))
+        assert sidebar.tree.acceptDrops() is True
+
+
+class TestPanelZoom:
+    def _tree(self, qapp):
+        from PySide6.QtWidgets import QTreeWidget
+        return QTreeWidget()
+
+    def test_zoom_clamps_and_persists(self, qapp, tmp_path):
+        from app.gui.zoom import ZoomController
+        tm = ThemeManager(tmp_path / "s.json")
+        tree = self._tree(qapp)
+        zc = ZoomController(tree, "panelX", tm)
+        zc.set_scale(5.0)  # 上限 2.0 にクランプ
+        assert zc.scale == 2.0
+        zc.set_scale(0.1)  # 下限 0.75 にクランプ
+        assert zc.scale == 0.75
+        # 別 ThemeManager で読み直して倍率が復元される
+        tree2 = self._tree(qapp)
+        zc2 = ZoomController(tree2, "panelX", ThemeManager(tmp_path / "s.json"))
+        assert zc2.scale == 0.75
+
+    def test_zoom_changes_font_and_icon(self, qapp, tmp_path):
+        from PySide6.QtCore import QSize
+        from app.gui.zoom import ZoomController
+        tree = self._tree(qapp)
+        tree.setIconSize(QSize(16, 16))
+        zc = ZoomController(tree, "panelY", None, base_icon=16)
+        before = tree.font().pointSizeF()
+        zc.set_scale(2.0)
+        assert tree.font().pointSizeF() > before
+        assert tree.iconSize().width() == 32
+
+
 class TestLayoutPersistence:
     def test_splitter_sizes_saved_and_restored(self, qapp, tmp_path,
                                                monkeypatch):
