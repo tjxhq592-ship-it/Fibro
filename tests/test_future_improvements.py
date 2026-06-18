@@ -171,6 +171,21 @@ class TestPanelZoom:
         assert tree.font().pointSizeF() > before
         assert tree.iconSize().width() == 32
 
+    def test_zoom_scales_table_row_height(self, qapp):
+        """ファイル一覧（QTableView）は行高も倍率に比例して伸びる。"""
+        from PySide6.QtCore import QSize
+        from PySide6.QtWidgets import QTableView
+        from app.gui.zoom import ZoomController
+        view = QTableView()
+        view.setIconSize(QSize(18, 18))
+        zc = ZoomController(view, "tbl", None, base_icon=18)
+        zc.set_scale(1.0)
+        h1 = view.verticalHeader().defaultSectionSize()
+        zc.set_scale(2.0)
+        h2 = view.verticalHeader().defaultSectionSize()
+        # 上下の隙間込みで概ね倍に（厳密一致でなく十分大きいこと）
+        assert h2 > h1 * 1.7
+
 
 class TestLayoutPersistence:
     def test_splitter_sizes_saved_and_restored(self, qapp, tmp_path,

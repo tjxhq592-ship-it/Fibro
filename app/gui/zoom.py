@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QObject, QSize, Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QFontMetrics
 from PySide6.QtWidgets import QApplication
 
 
@@ -32,6 +32,13 @@ class ZoomController(QObject):
             sz = view.iconSize()
             base_icon = sz.width() if sz.width() > 0 else 16
         self._base_icon = base_icon
+
+        # 基準の行高（等倍時）。アイコン or 文字の高い方＋上下パディング。
+        # 行高も倍率で拡大するので、ズームしても上下の隙間がバランスよく保たれる。
+        base_font = QFont(view.font())
+        base_font.setPointSizeF(self._base_pt)
+        line = QFontMetrics(base_font).height()
+        self._base_row = max(self._base_icon, line) + 8
 
         self._scale = self._load()
         self._apply()
@@ -65,6 +72,14 @@ class ZoomController(QObject):
         self._view.setFont(font)
         s = max(1, round(self._base_icon * self._scale))
         self._view.setIconSize(QSize(s, s))
+        # 行高（上下の隙間）も倍率に比例させる。QTableView（ファイル一覧）は
+        # 縦ヘッダーの既定セクションサイズで全行の高さを制御する。
+        vheader = getattr(self._view, "verticalHeader", None)
+        if callable(vheader):
+            header = vheader()
+            if header is not None:
+                header.setDefaultSectionSize(
+                    max(1, round(self._base_row * self._scale)))
 
     @property
     def scale(self) -> float:
