@@ -87,6 +87,22 @@ class TestColumnSorting:
         names = self._sorted_names(qapp, d, 1)
         assert names.index("small.bin") < names.index("big.bin")
 
+    def test_headers_are_japanese(self, qapp, tmp_path):
+        """列見出しが日本語で表示される。"""
+        from PySide6.QtCore import Qt
+        from app.gui.file_pane import FilePane
+        pane = FilePane()
+        try:
+            h = pane.proxy.headerData
+            o = Qt.Orientation.Horizontal
+            assert h(0, o) == "名前"
+            assert h(1, o) == "サイズ"
+            assert h(2, o) == "種類"
+            assert h(3, o) == "更新日時"
+        finally:
+            pane.deleteLater()
+            qapp.processEvents()
+
 
 # ---- プレビュー分類（純粋） ----
 class TestPreviewKind:

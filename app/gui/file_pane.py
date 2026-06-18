@@ -21,6 +21,16 @@ from app.gui.dnd_views import FileIconView, FileTableView
 from app.gui.thumbnails import ThumbnailDelegate
 
 
+# 一覧の列見出し（日本語）。将来の多言語対応時はここを差し替える。
+# キーは QFileSystemModel の列インデックス（0=名前 1=サイズ 2=種類 3=更新日時）。
+COLUMN_TITLES = {
+    0: "名前",
+    1: "サイズ",
+    2: "種類",
+    3: "更新日時",
+}
+
+
 class CurrentDirFilterProxy(QSortFilterProxyModel):
     """カレント直下のみ名前で絞り込むフィルタ（簡易フィルタボックス用）。
 
@@ -49,6 +59,14 @@ class CurrentDirFilterProxy(QSortFilterProxyModel):
             return True  # カレント直下以外（祖先チェーン等）は素通し
         name = model.index(row, 0, parent).data() or ""
         return self._needle in str(name).lower()
+
+    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):  # noqa: N802
+        """列見出しを日本語表示にする（横方向の表示テキストのみ差し替え）。"""
+        if (orientation == Qt.Orientation.Horizontal
+                and role == Qt.ItemDataRole.DisplayRole
+                and section in COLUMN_TITLES):
+            return COLUMN_TITLES[section]
+        return super().headerData(section, orientation, role)
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:  # noqa: N802
         """サイズ・更新日時は表示文字列でなく実値で比較する。
@@ -190,7 +208,7 @@ class FilePane(QWidget):
         """18: 列の表示/非表示トグル（名前列0は常時表示）。"""
         menu = QMenu(self)
         for col in range(1, self.list_model.columnCount()):
-            label = self.list_model.headerData(
+            label = self.proxy.headerData(
                 col, Qt.Orientation.Horizontal) or f"列{col}"
             action = menu.addAction(str(label))
             action.setCheckable(True)
