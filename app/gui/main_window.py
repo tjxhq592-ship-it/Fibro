@@ -80,6 +80,9 @@ class SingleRenameDialog(QDialog):
         layout.addLayout(form)
         layout.addWidget(buttons)
 
+        # 長いファイル名でも見やすいよう、既定の約2倍の幅を確保。
+        self.setMinimumWidth(560)
+
         self.name_edit.setFocus()
         self.name_edit.selectAll()
 
