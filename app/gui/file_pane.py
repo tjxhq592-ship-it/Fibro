@@ -50,6 +50,24 @@ class CurrentDirFilterProxy(QSortFilterProxyModel):
         name = model.index(row, 0, parent).data() or ""
         return self._needle in str(name).lower()
 
+    def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:  # noqa: N802
+        """サイズ・更新日時は表示文字列でなく実値で比較する。
+
+        既定の QSortFilterProxyModel は DisplayRole 文字列で並べるため、
+        サイズ（"721 KiB" vs "2.79 GiB"）や更新日時（時刻がゼロ埋めされず
+        "8:02" と "10:15" が逆転）で時系列・大小がずれる。QFileSystemModel の
+        QFileInfo から実値を取り出して比較する。
+        """
+        model = self.sourceModel()
+        info_left = model.fileInfo(left)
+        info_right = model.fileInfo(right)
+        col = left.column()
+        if col == 1:  # サイズ
+            return info_left.size() < info_right.size()
+        if col == 3:  # 更新日時
+            return info_left.lastModified() < info_right.lastModified()
+        return super().lessThan(left, right)
+
 
 class FilePane(QWidget):
     """ファイル一覧1枚（モデル・プロキシ・テーブル・履歴）を内包するペイン。"""

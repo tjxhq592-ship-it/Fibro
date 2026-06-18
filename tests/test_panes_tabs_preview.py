@@ -28,6 +28,66 @@ def _make_window(tmp_path, monkeypatch):
     return MainWindow()
 
 
+class TestColumnSorting:
+    def _wait_rows(self, qapp, model, root_index, n, limit=400):
+        import time
+        for _ in range(limit):
+            qapp.processEvents()
+            if model.rowCount(root_index) >= n:
+                return
+            time.sleep(0.005)
+
+    def _sorted_names(self, qapp, d, column):
+        """d を FilePane で開き、指定列で昇順ソートした名前列を返す。
+
+        QFileSystemModel の監視スレッドがプロセス終了時に segfault しないよう、
+        使い終わったら root を解除して破棄する。
+        """
+        from PySide6.QtCore import Qt
+        from app.gui.file_pane import FilePane
+        pane = FilePane()
+        try:
+            src = pane.list_model
+            proxy = pane.proxy
+            root_src = src.setRootPath(str(d))
+            self._wait_rows(qapp, src, root_src, 2)
+            proxy.set_root_path(str(d))
+            proxy.sort(column, Qt.SortOrder.AscendingOrder)
+            root_proxy = proxy.mapFromSource(root_src)
+            return [proxy.index(r, 0, root_proxy).data()
+                    for r in range(proxy.rowCount(root_proxy))]
+        finally:
+            pane.list_model.setRootPath("")
+            pane.deleteLater()
+            qapp.processEvents()
+
+    def test_date_sort_uses_real_datetime(self, qapp, tmp_path):
+        """更新日時ソートは表示文字列でなく実日時で並ぶ（8:00 < 10:00）。"""
+        import os
+        import time
+        d = tmp_path / "sortdir"
+        d.mkdir()
+        early = d / "early.txt"
+        late = d / "late.txt"
+        early.write_text("x")
+        late.write_text("x")
+        # 同日・時刻のみ差。文字列比較だと "10:00" < "8:00" で逆転する条件。
+        base = time.mktime((2026, 6, 18, 8, 0, 0, 0, 0, -1))
+        os.utime(early, (base, base))
+        os.utime(late, (base + 2 * 3600, base + 2 * 3600))  # 10:00
+        names = self._sorted_names(qapp, d, 3)
+        assert names.index("early.txt") < names.index("late.txt")
+
+    def test_size_sort_uses_real_bytes(self, qapp, tmp_path):
+        """サイズソートは表示文字列でなく実バイト数で並ぶ。"""
+        d = tmp_path / "sizedir"
+        d.mkdir()
+        (d / "small.bin").write_bytes(b"x" * 10)
+        (d / "big.bin").write_bytes(b"x" * 5000)
+        names = self._sorted_names(qapp, d, 1)
+        assert names.index("small.bin") < names.index("big.bin")
+
+
 # ---- プレビュー分類（純粋） ----
 class TestPreviewKind:
     def test_image_by_ext(self, tmp_path):
