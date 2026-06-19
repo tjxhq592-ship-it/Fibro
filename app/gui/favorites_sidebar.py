@@ -9,7 +9,7 @@ from __future__ import annotations
 from PySide6.QtCore import QRunnable, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
-    QInputDialog, QLabel, QMenu, QMessageBox, QTreeWidget, QTreeWidgetItem,
+    QInputDialog, QMenu, QMessageBox, QTreeWidget, QTreeWidgetItem,
     QVBoxLayout, QWidget,
 )
 
@@ -84,8 +84,7 @@ class FavoritesSidebar(QWidget):
         self._reach_checked.connect(self._apply_reachability)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.addWidget(QLabel("<b>お気に入り</b>"))
+        layout.setContentsMargins(0, 0, 0, 0)
 
         self.tree = _FavTree()
         self.tree.setHeaderHidden(True)
@@ -97,12 +96,6 @@ class FavoritesSidebar(QWidget):
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._show_menu)
         layout.addWidget(self.tree, stretch=1)
-
-        hint = QLabel("フォルダを右クリック→「お気に入りに追加」／"
-                      "ここで右クリック→「新規グループ」")
-        hint.setStyleSheet("color: gray; font-size: 10px;")
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
 
         self.refresh()
 

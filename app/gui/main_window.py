@@ -413,11 +413,17 @@ class MainWindow(QMainWindow):
         self.favorites.path_selected.connect(self.navigate)
         self.recent_sidebar = RecentSidebar(self.recent_store)
         self.recent_sidebar.path_selected.connect(self.navigate)
+        from app.gui.collapsible import CollapsibleSection
+        self.fav_section = CollapsibleSection("お気に入り", self.favorites)
+        self.recent_section = CollapsibleSection("履歴", self.recent_sidebar)
+        self.tree_section = CollapsibleSection("フォルダツリー", self.tree)
         left = QSplitter(Qt.Orientation.Vertical)
-        left.addWidget(self.favorites)
-        left.addWidget(self.recent_sidebar)
-        left.addWidget(self.tree)
+        left.addWidget(self.fav_section)
+        left.addWidget(self.recent_section)
+        left.addWidget(self.tree_section)
         left.setSizes([160, 160, 320])
+        for sec in (self.fav_section, self.recent_section, self.tree_section):
+            sec.toggled.connect(lambda _checked: self._save_layout())
 
         splitter.addWidget(left)
         splitter.addWidget(right_area)
@@ -1455,6 +1461,11 @@ class MainWindow(QMainWindow):
             self._main_splitter.setSizes([int(s) for s in sizes])
         if sizes := layout.get("left_splitter"):
             self._left_splitter.setSizes([int(s) for s in sizes])
+        if collapsed := layout.get("left_collapsed"):
+            sections = (self.fav_section, self.recent_section,
+                        self.tree_section)
+            for sec, c in zip(sections, collapsed):
+                sec.set_collapsed(bool(c))
         if sizes := layout.get("pane_splitter"):
             self.pane_splitter.setSizes([int(s) for s in sizes])
         if geo := layout.get("window"):
@@ -1469,6 +1480,11 @@ class MainWindow(QMainWindow):
             "main_splitter": self._main_splitter.sizes(),
             "left_splitter": self._left_splitter.sizes(),
             "pane_splitter": self.pane_splitter.sizes(),
+            "left_collapsed": [
+                self.fav_section.is_collapsed(),
+                self.recent_section.is_collapsed(),
+                self.tree_section.is_collapsed(),
+            ],
             "window": [g.x(), g.y(), g.width(), g.height()],
         })
 

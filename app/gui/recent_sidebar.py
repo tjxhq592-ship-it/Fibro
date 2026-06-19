@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QLabel, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+    QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
 from app.models.recent import RecentStore
@@ -25,8 +25,7 @@ class RecentSidebar(QWidget):
         self._store = store
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.addWidget(QLabel("<b>履歴</b>"))
+        layout.setContentsMargins(0, 0, 0, 0)
 
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
