@@ -26,6 +26,9 @@ def main() -> int:
     if APP_ICON.exists():
         app.setWindowIcon(QIcon(str(APP_ICON)))
 
+    from app.gui.theme import app_font
+    app.setFont(app_font())
+
     window = MainWindow()
     server = single_instance.InstanceServer()
     server.message_received.connect(window.handle_remote_open)

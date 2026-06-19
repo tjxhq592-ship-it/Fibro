@@ -7,7 +7,7 @@ QTreeWidget でグループ（フォルダ）によるネストを表現。
 from __future__ import annotations
 
 from PySide6.QtCore import QRunnable, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QBrush, QColor
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QInputDialog, QMenu, QMessageBox, QTreeWidget, QTreeWidgetItem,
     QVBoxLayout, QWidget,
@@ -184,7 +184,7 @@ class FavoritesSidebar(QWidget):
                 else item.text(0).replace("  (到達不可)", ""))
         if ok:
             item.setText(0, base)
-            item.setForeground(0, QBrush())  # 既定色へ戻す
+            item.setData(0, Qt.ItemDataRole.ForegroundRole, None)  # 既定色へ戻す
         else:
             item.setText(0, base + "  (到達不可)")
             item.setForeground(0, QColor("#9e9e9e"))

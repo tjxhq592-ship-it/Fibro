@@ -341,19 +341,6 @@ class MainWindow(QMainWindow):
         top.addWidget(self.breadcrumb, stretch=1)
         root.addLayout(top)
 
-        # フィルタボックス（パスバー下）
-        filter_row = QHBoxLayout()
-        filter_label = QLabel("フィルタ:")
-        self.filter_edit = QLineEdit()
-        self.filter_edit.setPlaceholderText("カレントフォルダ内を絞り込み…")
-        self.filter_edit.setClearButtonEnabled(True)
-        self._filter_debounce = QTimer(self, singleShot=True, interval=200)
-        self._filter_debounce.timeout.connect(self._apply_filter)
-        self.filter_edit.textChanged.connect(self._filter_debounce.start)
-        filter_row.addWidget(filter_label)
-        filter_row.addWidget(self.filter_edit, stretch=1)
-        root.addLayout(filter_row)
-
         # 3ペイン
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
@@ -401,11 +388,20 @@ class MainWindow(QMainWindow):
         self.pane_splitter.addWidget(self.primary_stack)
         self.pane_splitter.addWidget(self.secondary_pane)
 
+        # フィルタボックス（タブ行の下）
+        self.filter_edit = QLineEdit()
+        self.filter_edit.setPlaceholderText("カレントフォルダ内を絞り込み…")
+        self.filter_edit.setClearButtonEnabled(True)
+        self._filter_debounce = QTimer(self, singleShot=True, interval=200)
+        self._filter_debounce.timeout.connect(self._apply_filter)
+        self.filter_edit.textChanged.connect(self._filter_debounce.start)
+
         right_area = QWidget()
         right_layout = QVBoxLayout(right_area)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(2)
         right_layout.addLayout(tab_row)
+        right_layout.addWidget(self.filter_edit)
         right_layout.addWidget(self.pane_splitter, stretch=1)
 
         # 左ペイン: お気に入い（上）+ 履歴（中）+ フォルダツリー（下）
@@ -1403,6 +1399,8 @@ class MainWindow(QMainWindow):
             theme = self.theme_manager.toggle(app)
             self.statusBar().showMessage(
                 f"テーマ: {'ダーク' if theme == 'dark' else 'ライト'}", 3000)
+            self.favorites.refresh()
+            self.recent_sidebar.refresh()
 
     def rename_single(self) -> None:
         """F2: 選択中1件をその場でリネーム（RenameExecutor 経由で Undo 可）。"""

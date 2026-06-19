@@ -7,12 +7,25 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtWidgets import QApplication
 
 from app.atomicio import atomic_write_text
 
 ACCENT = QColor("#3d7eff")
+
+# アプリ共通フォント。英数字=Segoe UI → 日本語=Yu Gothic UI の順でフォールバック。
+# setFamilies() は Qt 5.13+ で有効。pointSize はポイント指定なので高 DPI でも崩れない。
+APP_FONT_FAMILIES = ["Segoe UI", "Yu Gothic UI", "sans-serif"]
+APP_FONT_SIZE_PT = 9
+
+
+def app_font() -> QFont:
+    """アプリ全体に適用する共通フォントを返す。"""
+    f = QFont()
+    f.setFamilies(APP_FONT_FAMILIES)
+    f.setPointSize(APP_FONT_SIZE_PT)
+    return f
 
 
 def _dark_palette() -> QPalette:
@@ -21,19 +34,29 @@ def _dark_palette() -> QPalette:
     base = QColor("#1e1f22")
     text = QColor("#e8e8e8")
     disabled = QColor("#7a7a7a")
-    p.setColor(QPalette.ColorRole.Window, window)
-    p.setColor(QPalette.ColorRole.WindowText, text)
-    p.setColor(QPalette.ColorRole.Base, base)
-    p.setColor(QPalette.ColorRole.AlternateBase, window)
-    p.setColor(QPalette.ColorRole.Text, text)
-    p.setColor(QPalette.ColorRole.Button, window)
-    p.setColor(QPalette.ColorRole.ButtonText, text)
-    p.setColor(QPalette.ColorRole.ToolTipBase, base)
-    p.setColor(QPalette.ColorRole.ToolTipText, text)
-    p.setColor(QPalette.ColorRole.PlaceholderText, disabled)
-    p.setColor(QPalette.ColorRole.Highlight, ACCENT)
-    p.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
-    p.setColor(QPalette.ColorRole.Link, ACCENT)
+
+    # Active グループ
+    active_colors = {
+        QPalette.ColorRole.Window: window,
+        QPalette.ColorRole.WindowText: text,
+        QPalette.ColorRole.Base: base,
+        QPalette.ColorRole.AlternateBase: window,
+        QPalette.ColorRole.Text: text,
+        QPalette.ColorRole.Button: window,
+        QPalette.ColorRole.ButtonText: text,
+        QPalette.ColorRole.ToolTipBase: base,
+        QPalette.ColorRole.ToolTipText: text,
+        QPalette.ColorRole.PlaceholderText: disabled,
+        QPalette.ColorRole.Highlight: ACCENT,
+        QPalette.ColorRole.HighlightedText: QColor("#ffffff"),
+        QPalette.ColorRole.Link: ACCENT,
+    }
+    for role, color in active_colors.items():
+        p.setColor(QPalette.ColorGroup.Active, role, color)
+        # Inactive も同じ色で明示設定（未設定だと QPalette() 生成元＝旧パレットの値が残る）
+        p.setColor(QPalette.ColorGroup.Inactive, role, color)
+
+    # Disabled グループ
     for role in (QPalette.ColorRole.Text, QPalette.ColorRole.ButtonText,
                  QPalette.ColorRole.WindowText):
         p.setColor(QPalette.ColorGroup.Disabled, role, disabled)
@@ -73,13 +96,30 @@ class ThemeManager:
     def apply(self, app: QApplication, theme: str | None = None) -> None:
         theme = theme or self.theme
         app.setStyle("Fusion")
+        # setStyle() 直後にフォントを再設定（スタイル変更でリセットされる環境への保険）
+        app.setFont(app_font())
         # OS のタイトルバー（非クライアント領域）も Qt 経由で追従させる。
-        # Qt が DWM のダークモード設定と再描画まで正しく処理する。
         self._apply_color_scheme(app, theme)
         if theme == "dark":
             app.setPalette(_dark_palette())
+            # QPalette の伝播が非同期の OS コールバックで上書きされる場合があるため、
+            # スタイルシートでビュー系ウィジェットの文字色・背景色を明示的に固定する。
+            app.setStyleSheet(
+                "QTreeView, QTreeWidget, QTableView, QListView {"
+                "  color: #e8e8e8;"
+                "  background-color: #1e1f22;"
+                "}"
+                "QTreeView::item, QTreeWidget::item, QTableView::item {"
+                "  color: #e8e8e8;"
+                "}"
+                "QHeaderView::section {"
+                "  color: #e8e8e8;"
+                "  background-color: #2b2d31;"
+                "}"
+            )
         else:
             app.setPalette(app.style().standardPalette())
+            app.setStyleSheet("")
         self._settings["theme"] = theme
         self._save()
 
