@@ -6,9 +6,44 @@
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QObject, QSize, Qt
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, QTimer
 from PySide6.QtGui import QFont, QFontMetrics
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
+
+
+class _ZoomToast(QLabel):
+    """ビュー中央に一時表示する倍率インジケーター。"""
+
+    _DURATION_MS = 1200
+
+    def __init__(self, parent) -> None:
+        super().__init__(parent)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setStyleSheet(
+            "background: rgba(30,30,30,200);"
+            "color: #fff;"
+            "border-radius: 6px;"
+            "padding: 4px 10px;"
+            "font-size: 13pt;"
+            "font-weight: bold;"
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.hide()
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self.hide)
+
+    def show_scale(self, scale: float) -> None:
+        self.setText(f"{round(scale * 100)}%")
+        self.adjustSize()
+        # 親（ビューのビューポート）中央に配置
+        p = self.parent()
+        if p is not None:
+            pw, ph = p.width(), p.height()
+            self.move((pw - self.width()) // 2, (ph - self.height()) // 2)
+        self.show()
+        self.raise_()
+        self._timer.start(self._DURATION_MS)
 
 
 class ZoomController(QObject):
@@ -43,7 +78,9 @@ class ZoomController(QObject):
         self._scale = self._load()
         self._apply()
         view.installEventFilter(self)
-        view.viewport().installEventFilter(self)
+        vp = view.viewport()
+        vp.installEventFilter(self)
+        self._toast = _ZoomToast(vp)
 
     # ---- 永続化 ----
     def _load(self) -> float:
@@ -85,13 +122,15 @@ class ZoomController(QObject):
     def scale(self) -> float:
         return self._scale
 
-    def set_scale(self, scale: float) -> None:
+    def set_scale(self, scale: float, show_toast: bool = False) -> None:
         scale = self._clamp(scale)
         if abs(scale - self._scale) < 1e-6:
             return
         self._scale = scale
         self._apply()
         self._save()
+        if show_toast:
+            self._toast.show_scale(self._scale)
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802 — Qt API
         if (event.type() == QEvent.Type.Wheel
@@ -99,6 +138,6 @@ class ZoomController(QObject):
             dy = event.angleDelta().y()
             if dy != 0:
                 step = self.STEP if dy > 0 else -self.STEP
-                self.set_scale(self._scale + step)
+                self.set_scale(self._scale + step, show_toast=True)
             return True  # 既定のスクロール挙動を抑止
         return super().eventFilter(obj, event)
