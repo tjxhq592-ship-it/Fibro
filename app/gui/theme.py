@@ -258,7 +258,6 @@ QToolButton:pressed {{
 
 /* ---- 折りたたみセクションのヘッダ（サイドバー見出し） ---- */
 #collapsibleHeader {{
-    padding: 4px 8px;
     background-color: {t['surface']};
     font-size: 11px;
     color: {t['text_sub']};

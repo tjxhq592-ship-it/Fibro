@@ -1,41 +1,41 @@
-{
-  "theme": "light",
-  "layout": {
-    "main_splitter": [
-      522,
-      1385
-    ],
-    "left_splitter": [
-      28,
-      489,
-      378,
-      0
-    ],
-    "pane_splitter": [
-      1385,
-      0
-    ],
-    "left_collapsed": [
-      false,
-      false,
-      false
-    ],
-    "window": [
-      0,
-      23,
-      1920,
-      1009
-    ]
-  },
-  "detail_expanded": true,
-  "search_options": {
-    "recursive": true,
-    "use_index": false
-  },
-  "tabs": [
-    "C:\\Users\\hiros\\AppData\\Local\\Temp\\pytest-of-hiros\\pytest-195\\test_navigate_clears_filter0\\sub"
-  ],
-  "dual_pane": false,
-  "columns": "AAAA/wAAAAAAAAABAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAn4AAAAEAQEBAAAAAAABAAAAAAAAAGT/////AAAAhAAAAAAAAAAEAAABUgAAAAEAAAABAAAAZAAAAAEAAAAAAAAAZAAAAAEAAAAAAAAAZAAAAAEAAAAAAAAD6AAAAAAAAAAAAAAAAAAAAAAAAAAAAQ==",
-  "view_mode": "details"
+﻿{
+    "theme":  "light",
+    "layout":  {
+                   "main_splitter":  [
+                                         522,
+                                         1385
+                                     ],
+                   "left_splitter":  [
+                                         28,
+                                         489,
+                                         378,
+                                         0
+                                     ],
+                   "pane_splitter":  [
+                                         1385,
+                                         0
+                                     ],
+                   "left_collapsed":  [
+                                          true,
+                                          true,
+                                          true
+                                      ],
+                   "window":  [
+                                  0,
+                                  23,
+                                  1920,
+                                  1009
+                              ]
+               },
+    "detail_expanded":  true,
+    "search_options":  {
+                           "recursive":  true,
+                           "use_index":  false
+                       },
+    "tabs":  [
+                 "C:\\Users\\hiros\\AppData\\Local\\Temp\\pytest-of-hiros\\pytest-195\\test_navigate_clears_filter0\\sub"
+             ],
+    "dual_pane":  false,
+    "columns":  "AAAA/wAAAAAAAAABAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAn4AAAAEAQEBAAAAAAABAAAAAAAAAGT/////AAAAhAAAAAAAAAAEAAABUgAAAAEAAAABAAAAZAAAAAEAAAAAAAAAZAAAAAEAAAAAAAAAZAAAAAEAAAAAAAAD6AAAAAAAAAAAAAAAAAAAAAAAAAAAAQ==",
+    "view_mode":  "details"
 }

@@ -2,14 +2,13 @@
 
 クリック可能なヘッダーバー（タイトル左＋シェブロン ∨/∧ 右）と本体ウィジェットを
 縦に並べ、ヘッダークリックで本体を畳む／開く。縦 QSplitter に複数並べると、
-畳んだ分の縦スペースが残りの展開セクションへ自動再配分される（折りたたみ時に
-maximumHeight をヘッダー高に固定してスプリッターに最小化を強制する）。
+畳んだ分の縦スペースが残りの展開セクションへ自動再配分される。
 """
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 # Qt が縦サイズ無制限に使う番兵値（QWIDGETSIZE_MAX）。
@@ -77,14 +76,27 @@ class CollapsibleSection(QWidget):
         self._content.setVisible(not collapsed)
         self._header.set_collapsed(collapsed)
         if collapsed:
-            self.setMaximumHeight(self._header.sizeHint().height())
+            # Fixed ポリシーで QSplitter が余剰スペースを強制配分するのを防ぐ。
+            # maximumHeight だけでは QSplitter が子の最大値を超えて拡張するため不十分。
+            self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+            # sizeHint（自然高=24px）でなく set_header_height 後の実高を使う。
+            # 初期化時など実高未確定の場合は sizeHint にフォールバック。
+            h = self._header.height()
+            if h <= 0:
+                h = self._header.sizeHint().height()
+            self.setMaximumHeight(h)
         else:
+            self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
             self.setMaximumHeight(_QWIDGETSIZE_MAX)
 
     def set_header_height(self, height: int) -> None:
         """見出しバーの高さを固定する（タブ行と高さを揃える用）。"""
+        if height < 20:
+            return
         self._header.setFixedHeight(height)
         lay = self._header.layout()
         if lay is not None:
             m = lay.contentsMargins()
             lay.setContentsMargins(m.left(), 0, m.right(), 0)
+        if self._collapsed:
+            self.setMaximumHeight(height)
