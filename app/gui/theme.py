@@ -38,7 +38,7 @@ TOKENS: dict[str, dict[str, str]] = {
     "light": {
         "bg": "#ffffff",
         "surface": "#f5f6f8",
-        "elevated": "#fafbfc",
+        "elevated": "#f2f3f5",
         "border": "#e3e5ea",
         "border_str": "#d0d3da",
         "text": "#1f2329",
@@ -210,6 +210,20 @@ QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 
 /* ---- ステータスのラベル（objectName で限定） ---- */
 QLabel#statusLabel {{ color: {t['text_sub']}; }}
+
+/* ---- タブ閉じるボタン（カスタム QToolButton） ---- */
+QToolButton#tabClose {{
+    color: {t['text_hint']};
+    background: transparent;
+    border: none;
+    border-radius: 3px;
+    padding: 0px 4px;
+    font-size: 13px;
+}}
+QToolButton#tabClose:hover {{
+    color: {t['text']};
+    background: {t['hover_bg']};
+}}
 """
 
 

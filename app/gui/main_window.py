@@ -361,12 +361,11 @@ class MainWindow(QMainWindow):
         # 中央右側: タブバー + ペインスプリッタ（主スタック + サブペイン）
         self.tab_bar = QTabBar()
         self.tab_bar.setMovable(True)
-        self.tab_bar.setTabsClosable(True)
+        self.tab_bar.setTabsClosable(False)
         self.tab_bar.setExpanding(False)
         # スクロールボタン用の予約領域を無くし、タブと「＋」の間の隙間を解消
         self.tab_bar.setUsesScrollButtons(False)
         self.tab_bar.currentChanged.connect(self._on_tab_changed)
-        self.tab_bar.tabCloseRequested.connect(self.close_tab)
 
         # 21: タブの右に「＋」新規タブボタン
         self.new_tab_btn = QToolButton()
@@ -550,6 +549,7 @@ class MainWindow(QMainWindow):
         self._tabs.append(pane)
         self.primary_stack.addWidget(pane)
         idx = self.tab_bar.addTab(self._tab_title(target))
+        self._install_tab_close_button(idx)
         self.tab_bar.setCurrentIndex(idx)  # → _on_tab_changed でアクティブ化
         self.navigate(target)
         return pane
@@ -602,6 +602,25 @@ class MainWindow(QMainWindow):
 
     def close_current_tab(self) -> None:
         self.close_tab(self.tab_bar.currentIndex())
+
+    def _install_tab_close_button(self, index: int) -> None:
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QTabBar
+        btn = QToolButton()
+        btn.setObjectName("tabClose")
+        btn.setText("✕")
+        btn.setAutoRaise(True)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setToolTip("タブを閉じる")
+        btn.clicked.connect(lambda: self._close_tab_for_button(btn))
+        self.tab_bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, btn)
+
+    def _close_tab_for_button(self, btn) -> None:
+        from PySide6.QtWidgets import QTabBar
+        for i in range(self.tab_bar.count()):
+            if self.tab_bar.tabButton(i, QTabBar.ButtonPosition.RightSide) is btn:
+                self.close_tab(i)
+                return
 
     def next_tab(self) -> None:
         n = self.tab_bar.count()
