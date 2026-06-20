@@ -236,11 +236,17 @@ class SearchPanel(QWidget):
         self._worker.start()
 
     def cancel_search(self) -> None:
-        if self._worker and self._worker.isRunning():
-            self._worker.cancel()
-            self._worker.wait(3000)
         self._flush_timer.stop()
-        self._flush_hits()
+        self._pending.clear()
+        if self._worker is not None:
+            self._worker.cancel()
+            try:
+                self._worker.hit.disconnect(self._on_hit)
+                self._worker.finished_ok.disconnect(self._on_finished)
+                self._worker.status.disconnect(self.status_label.setText)
+            except (RuntimeError, TypeError):
+                pass
+            self._worker.finished.connect(self._worker.deleteLater)
         self._worker = None
 
     # ---- 結果 ----
