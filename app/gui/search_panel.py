@@ -100,6 +100,10 @@ class SearchPanel(QWidget):
         # settings は ThemeManager 互換オブジェクト（get/set）。
         # 共有することで settings.json の単一ライターを保証する。
         self._settings = settings
+        self._pending: list[QListWidgetItem] = []
+        self._flush_timer = QTimer(self)
+        self._flush_timer.setInterval(100)  # 100ms ごと = 最大10回/秒
+        self._flush_timer.timeout.connect(self._flush_hits)
         self._build_ui()
         self._load_options()  # 保存されたオプションを復元（signal 接続前）
         # 復元後に signal 接続 → 以降のユーザー変更だけが保存される
@@ -223,6 +227,8 @@ class SearchPanel(QWidget):
                      and not is_wildcard(options.keyword)
                      and not options.case_sensitive
                      and options.recursive)
+        self._pending.clear()
+        self._flush_timer.start()
         self._worker = SearchWorker(self._root, options, use_index, self)
         self._worker.hit.connect(self._on_hit)
         self._worker.status.connect(self.status_label.setText)
@@ -233,6 +239,8 @@ class SearchPanel(QWidget):
         if self._worker and self._worker.isRunning():
             self._worker.cancel()
             self._worker.wait(3000)
+        self._flush_timer.stop()
+        self._flush_hits()
         self._worker = None
 
     # ---- 結果 ----
@@ -248,10 +256,22 @@ class SearchPanel(QWidget):
         item = QListWidgetItem(text)
         item.setData(Qt.ItemDataRole.UserRole, hit.path)
         item.setToolTip(hit.path)
-        self.results.addItem(item)
+        self._pending.append(item)
+
+    def _flush_hits(self) -> None:
+        if not self._pending:
+            return
+        batch = self._pending
+        self._pending = []
+        self.results.setUpdatesEnabled(False)
+        for item in batch:
+            self.results.addItem(item)
+        self.results.setUpdatesEnabled(True)
         self.status_label.setText(f"検索中… {self.results.count()}件")
 
     def _on_finished(self, scanned: int, skipped: int) -> None:
+        self._flush_hits()
+        self._flush_timer.stop()
         self.search_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
         text = (f"{self.results.count()}件ヒット "
