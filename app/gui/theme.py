@@ -22,32 +22,42 @@ APP_FONT_SIZE_PT = 9
 # + border（細線）+ accent。dark/light で同じキー構成。
 TOKENS: dict[str, dict[str, str]] = {
     "dark": {
-        "bg": "#1a1b1e",
-        "surface": "#1c1d21",
-        "elevated": "#1e1f24",
-        "border": "#2c2d32",
-        "border_str": "#34353a",
-        "text": "#d6d8dd",
-        "text_sub": "#9598a0",
-        "text_hint": "#6b6d75",
-        "accent": "#5b9cf6",
-        "sel_bg": "rgba(91,156,246,0.20)",
-        "hover_bg": "rgba(255,255,255,0.05)",
-        "scrollbar": "#3a3b40",
+        "bg": "#111318",
+        "surface": "#1A1D24",
+        "elevated": "#262B36",
+
+        "border": "#343B49",
+        "border_str": "#505B71",
+
+        "text": "#F5F7FA",
+        "text_sub": "#B4BDCB",
+        "text_hint": "#798396",
+
+        "accent": "#4F8CFF",
+
+        "sel_bg": "rgba(79,140,255,0.28)",
+        "hover_bg": "rgba(255,255,255,0.10)",
+
+        "scrollbar": "#596275",
     },
     "light": {
-        "bg": "#ffffff",
-        "surface": "#f5f6f8",
-        "elevated": "#f2f3f5",
-        "border": "#e3e5ea",
-        "border_str": "#d0d3da",
-        "text": "#1f2329",
-        "text_sub": "#5c616b",
-        "text_hint": "#8b909a",
-        "accent": "#2f6fe0",
-        "sel_bg": "rgba(47,111,224,0.14)",
-        "hover_bg": "rgba(0,0,0,0.04)",
-        "scrollbar": "#c7cad1",
+        "bg": "#EEF1F5",
+        "surface": "#FFFFFF",
+        "elevated": "#F6F8FB",
+
+        "border": "#D6DCE7",
+        "border_str": "#AAB4C4",
+
+        "text": "#111827",
+        "text_sub": "#4B5563",
+        "text_hint": "#7A8598",
+
+        "accent": "#2563EB",
+
+        "sel_bg": "rgba(37,99,235,0.18)",
+        "hover_bg": "rgba(0,0,0,0.05)",
+
+        "scrollbar": "#B4BCC9",
     },
 }
 
@@ -72,6 +82,7 @@ def _palette(t: dict[str, str]) -> QPalette:
     text = QColor(t["text"])
     disabled = QColor(t["text_hint"])
     accent = QColor(t["accent"])
+
     roles = {
         QPalette.ColorRole.Window: window,
         QPalette.ColorRole.WindowText: text,
@@ -88,13 +99,19 @@ def _palette(t: dict[str, str]) -> QPalette:
         QPalette.ColorRole.Link: accent,
         QPalette.ColorRole.Mid: QColor(t["border"]),
     }
+
     for role, color in roles.items():
         p.setColor(QPalette.ColorGroup.Active, role, color)
         # Inactive も同色で明示（未設定だと旧パレットの値が残る）
         p.setColor(QPalette.ColorGroup.Inactive, role, color)
-    for role in (QPalette.ColorRole.Text, QPalette.ColorRole.ButtonText,
-                 QPalette.ColorRole.WindowText):
+
+    for role in (
+        QPalette.ColorRole.Text,
+        QPalette.ColorRole.ButtonText,
+        QPalette.ColorRole.WindowText,
+    ):
         p.setColor(QPalette.ColorGroup.Disabled, role, disabled)
+
     return p
 
 
@@ -111,14 +128,17 @@ QTreeView, QTreeWidget, QTableView, QListView {{
     selection-background-color: {t['sel_bg']};
     selection-color: {t['text']};
 }}
+
 QTableView::item, QTreeView::item, QTreeWidget::item, QListView::item {{
     padding: 5px 6px;
     border: none;
     color: {t['text']};
 }}
+
 QTableView::item:hover, QTreeView::item:hover, QListView::item:hover {{
     background-color: {t['hover_bg']};
 }}
+
 QTableView::item:selected, QTreeView::item:selected,
 QTreeWidget::item:selected, QListView::item:selected {{
     background-color: {t['sel_bg']};
@@ -135,10 +155,16 @@ QHeaderView::section {{
     border-right: 1px solid {t['border']};
     font-weight: 400;
 }}
-QHeaderView::section:hover {{ color: {t['text']}; }}
+
+QHeaderView::section:hover {{
+    color: {t['text']};
+}}
 
 /* ---- タブ ---- */
-QTabBar {{ qproperty-drawBase: 0; }}
+QTabBar {{
+    qproperty-drawBase: 0;
+}}
+
 QTabBar::tab {{
     background: transparent;
     color: {t['text_sub']};
@@ -147,7 +173,12 @@ QTabBar::tab {{
     border: none;
     border-top: 2px solid transparent;
 }}
-QTabBar::tab:hover {{ background: {t['hover_bg']}; color: {t['text']}; }}
+
+QTabBar::tab:hover {{
+    background: {t['hover_bg']};
+    color: {t['text']};
+}}
+
 QTabBar::tab:selected {{
     background: {t['elevated']};
     color: {t['text']};
@@ -155,7 +186,12 @@ QTabBar::tab:selected {{
     border-top-left-radius: 6px;
     border-top-right-radius: 6px;
 }}
-QTabBar::close-button {{ margin-left: 6px; subcontrol-position: right; }}
+
+QTabBar::close-button {{
+    margin-left: 6px;
+    subcontrol-position: right;
+}}
+
 QTabBar::close-button:hover {{
     background: {t['hover_bg']};
     border-radius: 3px;
@@ -171,7 +207,10 @@ QLineEdit {{
     selection-background-color: {t['accent']};
     selection-color: #ffffff;
 }}
-QLineEdit:focus {{ border: 1px solid {t['accent']}; }}
+
+QLineEdit:focus {{
+    border: 1px solid {t['accent']};
+}}
 
 /* ---- ツールボタン（パンくず / ？ / アイコンボタン） ---- */
 QToolButton {{
@@ -181,35 +220,87 @@ QToolButton {{
     border-radius: 5px;
     padding: 3px 6px;
 }}
-QToolButton:hover {{ background: {t['hover_bg']}; }}
-QToolButton:pressed {{ background: {t['sel_bg']}; }}
+
+QToolButton:hover {{
+    background: {t['hover_bg']};
+}}
+
+QToolButton:pressed {{
+    background: {t['sel_bg']};
+}}
 
 /* ---- 折りたたみセクションのヘッダ（サイドバー見出し） ---- */
-#collapsibleHeader {{ padding: 3px 6px; }}
-#collapsibleHeader:hover {{ background: {t['hover_bg']}; }}
+#collapsibleHeader {{
+    padding: 3px 6px;
+}}
+
+#collapsibleHeader:hover {{
+    background: {t['hover_bg']};
+}}
 
 /* ---- スプリッタの仕切り（点線ハンドル廃止→細線） ---- */
-QSplitter::handle {{ background-color: {t['border']}; }}
-QSplitter::handle:horizontal {{ width: 1px; }}
-QSplitter::handle:vertical {{ height: 1px; }}
-QSplitter::handle:hover {{ background-color: {t['accent']}; }}
+QSplitter::handle {{
+    background-color: {t['border']};
+}}
+
+QSplitter::handle:horizontal {{
+    width: 1px;
+}}
+
+QSplitter::handle:vertical {{
+    height: 1px;
+}}
+
+QSplitter::handle:hover {{
+    background-color: {t['accent']};
+}}
 
 /* ---- スクロールバー（スリム・オーバーレイ風） ---- */
-QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}
+QScrollBar:vertical {{
+    background: transparent;
+    width: 10px;
+    margin: 0;
+}}
+
 QScrollBar::handle:vertical {{
-    background: {t['scrollbar']}; border-radius: 5px; min-height: 28px;
+    background: {t['scrollbar']};
+    border-radius: 5px;
+    min-height: 28px;
 }}
-QScrollBar::handle:vertical:hover {{ background: {t['text_hint']}; }}
-QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 0; }}
+
+QScrollBar::handle:vertical:hover {{
+    background: {t['text_hint']};
+}}
+
+QScrollBar:horizontal {{
+    background: transparent;
+    height: 10px;
+    margin: 0;
+}}
+
 QScrollBar::handle:horizontal {{
-    background: {t['scrollbar']}; border-radius: 5px; min-width: 28px;
+    background: {t['scrollbar']};
+    border-radius: 5px;
+    min-width: 28px;
 }}
-QScrollBar::handle:horizontal:hover {{ background: {t['text_hint']}; }}
-QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
-QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
+
+QScrollBar::handle:horizontal:hover {{
+    background: {t['text_hint']};
+}}
+
+QScrollBar::add-line, QScrollBar::sub-line {{
+    height: 0;
+    width: 0;
+}}
+
+QScrollBar::add-page, QScrollBar::sub-page {{
+    background: transparent;
+}}
 
 /* ---- ステータスのラベル（objectName で限定） ---- */
-QLabel#statusLabel {{ color: {t['text_sub']}; }}
+QLabel#statusLabel {{
+    color: {t['text_sub']};
+}}
 
 /* ---- タブ閉じるボタン（カスタム QToolButton） ---- */
 QToolButton#tabClose {{
@@ -220,6 +311,7 @@ QToolButton#tabClose {{
     padding: 0px 4px;
     font-size: 13px;
 }}
+
 QToolButton#tabClose:hover {{
     color: {t['text']};
     background: {t['hover_bg']};
@@ -242,7 +334,8 @@ class ThemeManager:
         try:
             atomic_write_text(
                 self._path,
-                json.dumps(self._settings, ensure_ascii=False, indent=2))
+                json.dumps(self._settings, ensure_ascii=False, indent=2),
+            )
         except OSError:
             pass  # 設定保存失敗でアプリは止めない
 
@@ -260,11 +353,13 @@ class ThemeManager:
     def apply(self, app: QApplication, theme: str | None = None) -> None:
         theme = theme or self.theme
         t = TOKENS["dark"] if theme == "dark" else TOKENS["light"]
+
         app.setStyle("Fusion")
         app.setFont(app_font())          # スタイル変更でリセットされる環境への保険
         self._apply_color_scheme(app, theme)  # OS タイトルバー等を追従
         app.setPalette(_palette(t))
         app.setStyleSheet(_stylesheet(t))
+
         self._settings["theme"] = theme
         self._save()
 
@@ -272,11 +367,13 @@ class ThemeManager:
     def _apply_color_scheme(app: QApplication, theme: str) -> None:
         """ネイティブのカラースキーム（タイトルバー等）を切替。Qt6.5+。"""
         from PySide6.QtCore import Qt
+
         hints = app.styleHints()
         if hasattr(hints, "setColorScheme"):
             hints.setColorScheme(
                 Qt.ColorScheme.Dark if theme == "dark"
-                else Qt.ColorScheme.Light)
+                else Qt.ColorScheme.Light
+            )
 
     def toggle(self, app: QApplication) -> str:
         new_theme = "dark" if self.theme == "light" else "light"

@@ -2,22 +2,23 @@
   "theme": "light",
   "layout": {
     "main_splitter": [
-      174,
-      462
+      522,
+      1385
     ],
     "left_splitter": [
-      144,
-      185,
-      143
+      28,
+      489,
+      378,
+      0
     ],
     "pane_splitter": [
-      640,
+      1385,
       0
     ],
     "left_collapsed": [
-      true,
       false,
-      true
+      false,
+      false
     ],
     "window": [
       0,
