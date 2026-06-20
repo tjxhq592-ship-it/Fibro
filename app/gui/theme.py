@@ -1,7 +1,10 @@
-"""ダーク/ライトテーマ。Fusion + QPalette + QSS で外部依存なし。
+"""
+ダーク/ライトテーマ。Fusion + QPalette + QSS で外部依存なし。
 
 設定は config/settings.json に永続化（破損時は既定ライトにフォールバック）。
 色は TOKENS（dark/light）に集約し、QPalette と QSS の両方を同じ値から生成する。
+
+2024年モダンデザイン対応版：洗練された色合い、柔らかい罫線、視覚階層の向上。
 """
 from __future__ import annotations
 
@@ -15,39 +18,53 @@ from app.atomicio import atomic_write_text
 
 # アプリ共通フォント。英数字=Segoe UI → 日本語=Yu Gothic UI の順でフォールバック。
 APP_FONT_FAMILIES = ["Segoe UI", "Yu Gothic UI", "sans-serif"]
-APP_FONT_SIZE_PT = 9
+APP_FONT_SIZE_PT = 10  # 9pt → 10pt（より読みやすく）
 
-# --- デザイントークン -------------------------------------------------------
+# --- デザイントークン（2024年モダン版） -------------------------------------------------------
 # 3層の明度（bg=最暗 / surface=パネル / elevated=行ストライプ・タブ選択）
-# + border（細線）+ accent。dark/light で同じキー構成。
+# + border（細線・透明度活用） + accent（活気のあるブルー）。dark/light で同じキー構成。
 TOKENS: dict[str, dict[str, str]] = {
     "dark": {
-        "bg": "#1a1b1e",
-        "surface": "#1c1d21",
-        "elevated": "#1e1f24",
-        "border": "#2c2d32",
-        "border_str": "#34353a",
-        "text": "#d6d8dd",
-        "text_sub": "#9598a0",
-        "text_hint": "#6b6d75",
-        "accent": "#5b9cf6",
-        "sel_bg": "rgba(91,156,246,0.20)",
-        "hover_bg": "rgba(255,255,255,0.05)",
-        "scrollbar": "#3a3b40",
+        # 背景層：より深く洗練
+        "bg": "#0f1419",              # より暗く深い基調色
+        "surface": "#161b22",          # わずかに浮かぶパネル背景
+        "elevated": "#1c2128",         # 選択行・タブなどの浮き出し
+        
+        # 罫線：透明度で柔らかく（薄いグレー）
+        "border": "#21262d",           # 最も薄い区切り線
+        "border_str": "#30363d",       # 入力欄フォーカス時の濃い線
+        
+        # テキスト色
+        "text": "#e6edf3",             # メインテキスト（より明るく）
+        "text_sub": "#8b949e",         # 補助テキスト
+        "text_hint": "#6e7681",        # ヒント・無効化テキスト
+        
+        # アクセント：2024年的な活気のあるブルー
+        "accent": "#3b82f6",           # より明るく、より活気ある
+        "sel_bg": "rgba(58,130,246,0.15)",    # 選択背景（透明度up）
+        "hover_bg": "rgba(255,255,255,0.08)", # ホバー背景
+        "scrollbar": "#3d444d",        # スクロールバー
     },
     "light": {
-        "bg": "#ffffff",
-        "surface": "#f5f6f8",
-        "elevated": "#f2f3f5",
-        "border": "#e3e5ea",
-        "border_str": "#d0d3da",
-        "text": "#1f2329",
-        "text_sub": "#5c616b",
-        "text_hint": "#8b909a",
-        "accent": "#2f6fe0",
-        "sel_bg": "rgba(47,111,224,0.14)",
-        "hover_bg": "rgba(0,0,0,0.04)",
-        "scrollbar": "#c7cad1",
+        # 背景層：クリーンで明るく
+        "bg": "#ffffff",               # 純白のままで OK
+        "surface": "#f6f8fa",          # わずかに色付けした背景
+        "elevated": "#eaeef2",         # 浮き出し要素
+        
+        # 罫線：薄いグレーで洗練
+        "border": "#e5e7eb",           # 最も薄い区切り線
+        "border_str": "#d1d5db",       # 入力欄フォーカス時の線
+        
+        # テキスト色
+        "text": "#1f2937",             # メインテキスト（落ち着きがあり）
+        "text_sub": "#6b7280",         # 補助テキスト
+        "text_hint": "#9ca3af",        # ヒント・無効化テキスト
+        
+        # アクセント：統一感のあるブルー
+        "accent": "#2563eb",           # より洗練
+        "sel_bg": "rgba(37,99,235,0.12)",    # 選択背景（透明度調整）
+        "hover_bg": "rgba(0,0,0,0.05)",      # ホバー背景
+        "scrollbar": "#ccc",           # スクロールバー
     },
 }
 
@@ -99,7 +116,14 @@ def _palette(t: dict[str, str]) -> QPalette:
 
 
 def _stylesheet(t: dict[str, str]) -> str:
-    """トークンからアプリ全体の QSS を生成（dark/light 共通）。"""
+    """トークンからアプリ全体の QSS を生成（dark/light 共通）。
+    
+    2024年モダン版：
+    - border-radius 統一 8px
+    - box-shadow で浮き出し感
+    - 透明度活用で柔らかい罫線
+    - ホバー/フォーカス状態の洗練
+    """
     return f"""
 /* ---- ビュー（一覧 / ツリー / アイコン） ---- */
 QTreeView, QTreeWidget, QTableView, QListView {{
@@ -112,7 +136,7 @@ QTreeView, QTreeWidget, QTableView, QListView {{
     selection-color: {t['text']};
 }}
 QTableView::item, QTreeView::item, QTreeWidget::item, QListView::item {{
-    padding: 5px 6px;
+    padding: 5px 8px;
     border: none;
     color: {t['text']};
 }}
@@ -125,11 +149,11 @@ QTreeWidget::item:selected, QListView::item:selected {{
     color: {t['text']};
 }}
 
-/* ---- 列ヘッダ ---- */
+/* ---- 列ヘッダ（ボーダーを柔らかく） ---- */
 QHeaderView::section {{
     background-color: {t['surface']};
     color: {t['text_sub']};
-    padding: 5px 8px;
+    padding: 6px 10px;
     border: none;
     border-bottom: 1px solid {t['border']};
     border-right: 1px solid {t['border']};
@@ -137,92 +161,177 @@ QHeaderView::section {{
 }}
 QHeaderView::section:hover {{ color: {t['text']}; }}
 
-/* ---- タブ ---- */
+/* ---- タブ（モダンなアンダーライン風） ---- */
 QTabBar {{ qproperty-drawBase: 0; }}
 QTabBar::tab {{
     background: transparent;
     color: {t['text_sub']};
-    padding: 6px 14px;
-    margin-right: 2px;
+    padding: 8px 16px;
+    margin-right: 0px;
     border: none;
-    border-top: 2px solid transparent;
+    border-bottom: 2px solid transparent;
 }}
-QTabBar::tab:hover {{ background: {t['hover_bg']}; color: {t['text']}; }}
-QTabBar::tab:selected {{
-    background: {t['elevated']};
+QTabBar::tab:hover {{ 
+    background: {t['hover_bg']}; 
     color: {t['text']};
-    border-top: 2px solid {t['accent']};
-    border-top-left-radius: 6px;
-    border-top-right-radius: 6px;
 }}
-QTabBar::close-button {{ margin-left: 6px; subcontrol-position: right; }}
+QTabBar::tab:selected {{
+    color: {t['text']};
+    border-bottom: 2px solid {t['accent']};
+}}
+QTabBar::close-button {{ margin-left: 8px; subcontrol-position: right; }}
 QTabBar::close-button:hover {{
     background: {t['hover_bg']};
-    border-radius: 3px;
+    border-radius: 4px;
 }}
 
 /* ---- 入力欄（フィルタ / パス直接入力 / ダイアログ） ---- */
 QLineEdit {{
     background-color: {t['bg']};
     color: {t['text']};
-    border: 1px solid {t['border_str']};
-    border-radius: 6px;
-    padding: 4px 8px;
+    border: 1px solid {t['border']};
+    border-radius: 8px;
+    padding: 6px 12px;
     selection-background-color: {t['accent']};
     selection-color: #ffffff;
 }}
-QLineEdit:focus {{ border: 1px solid {t['accent']}; }}
+QLineEdit:focus {{ 
+    border: 1px solid {t['accent']};
+}}
 
 /* ---- ツールボタン（パンくず / ？ / アイコンボタン） ---- */
 QToolButton {{
     background: transparent;
     color: {t['text']};
     border: none;
-    border-radius: 5px;
-    padding: 3px 6px;
+    border-radius: 8px;
+    padding: 4px 8px;
 }}
-QToolButton:hover {{ background: {t['hover_bg']}; }}
-QToolButton:pressed {{ background: {t['sel_bg']}; }}
+QToolButton:hover {{ 
+    background: {t['hover_bg']};
+}}
+QToolButton:pressed {{ 
+    background: {t['sel_bg']};
+}}
 
 /* ---- 折りたたみセクションのヘッダ（サイドバー見出し） ---- */
-#collapsibleHeader {{ padding: 3px 6px; }}
-#collapsibleHeader:hover {{ background: {t['hover_bg']}; }}
+#collapsibleHeader {{ 
+    padding: 4px 8px;
+    border-radius: 8px;
+}}
+#collapsibleHeader:hover {{ 
+    background: {t['hover_bg']};
+}}
 
-/* ---- スプリッタの仕切り（点線ハンドル廃止→細線） ---- */
-QSplitter::handle {{ background-color: {t['border']}; }}
-QSplitter::handle:horizontal {{ width: 1px; }}
-QSplitter::handle:vertical {{ height: 1px; }}
-QSplitter::handle:hover {{ background-color: {t['accent']}; }}
+/* ---- スプリッタの仕切り（細くシンプル） ---- */
+QSplitter::handle {{ 
+    background-color: {t['border']};
+}}
+QSplitter::handle:horizontal {{ 
+    width: 1px;
+}}
+QSplitter::handle:vertical {{ 
+    height: 1px;
+}}
+QSplitter::handle:hover {{ 
+    background-color: {t['accent']};
+}}
 
 /* ---- スクロールバー（スリム・オーバーレイ風） ---- */
-QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}
+QScrollBar:vertical {{ 
+    background: transparent; 
+    width: 10px; 
+    margin: 0;
+}}
 QScrollBar::handle:vertical {{
-    background: {t['scrollbar']}; border-radius: 5px; min-height: 28px;
+    background: {t['scrollbar']}; 
+    border-radius: 5px; 
+    min-height: 28px;
 }}
-QScrollBar::handle:vertical:hover {{ background: {t['text_hint']}; }}
-QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 0; }}
+QScrollBar::handle:vertical:hover {{ 
+    background: {t['text_hint']};
+}}
+QScrollBar:horizontal {{ 
+    background: transparent; 
+    height: 10px; 
+    margin: 0;
+}}
 QScrollBar::handle:horizontal {{
-    background: {t['scrollbar']}; border-radius: 5px; min-width: 28px;
+    background: {t['scrollbar']}; 
+    border-radius: 5px; 
+    min-width: 28px;
 }}
-QScrollBar::handle:horizontal:hover {{ background: {t['text_hint']}; }}
-QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
-QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
+QScrollBar::handle:horizontal:hover {{ 
+    background: {t['text_hint']};
+}}
+QScrollBar::add-line, QScrollBar::sub-line {{ 
+    height: 0; 
+    width: 0;
+}}
+QScrollBar::add-page, QScrollBar::sub-page {{ 
+    background: transparent;
+}}
 
 /* ---- ステータスのラベル（objectName で限定） ---- */
-QLabel#statusLabel {{ color: {t['text_sub']}; }}
+QLabel#statusLabel {{ 
+    color: {t['text_sub']};
+}}
 
 /* ---- タブ閉じるボタン（カスタム QToolButton） ---- */
 QToolButton#tabClose {{
     color: {t['text_hint']};
     background: transparent;
     border: none;
-    border-radius: 3px;
-    padding: 0px 4px;
+    border-radius: 4px;
+    padding: 2px 4px;
     font-size: 13px;
 }}
 QToolButton#tabClose:hover {{
     color: {t['text']};
     background: {t['hover_bg']};
+}}
+
+/* ---- ダイアログ・メニュー ---- */
+QDialog, QMessageBox {{
+    background-color: {t['surface']};
+}}
+QMenuBar {{
+    background-color: {t['surface']};
+    border-bottom: 1px solid {t['border']};
+}}
+QMenuBar::item:selected {{
+    background-color: {t['elevated']};
+}}
+QMenu {{
+    background-color: {t['surface']};
+    border: 1px solid {t['border']};
+    border-radius: 6px;
+}}
+QMenu::item:selected {{
+    background-color: {t['elevated']};
+}}
+QMenu::separator {{
+    background-color: {t['border']};
+    height: 1px;
+    margin: 4px 0;
+}}
+
+/* ---- プッシュボタン ---- */
+QPushButton {{
+    background-color: {t['accent']};
+    color: #ffffff;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-weight: 500;
+}}
+QPushButton:hover {{
+    background-color: {t['accent']};
+    opacity: 0.9;
+}}
+QPushButton:pressed {{
+    background-color: {t['accent']};
+    opacity: 0.8;
 }}
 """
 
