@@ -1493,12 +1493,21 @@ class MainWindow(QMainWindow):
 
     def toggle_search(self) -> None:
         self._ensure_search_panel()
+        sp = self._main_splitter
+        left_w = sp.sizes()[0]
+
         if self.search_dock.isVisible():
             self.search_dock.hide()
         else:
             self.search_panel.set_root(self.current_path)
             self.search_dock.show()
             self.search_panel.keyword_edit.setFocus()
+
+        def _keep_left():
+            total = sp.size().width()
+            right_w = max(total - left_w - sp.handleWidth(), 1)
+            sp.setSizes([left_w, right_w])
+        QTimer.singleShot(0, _keep_left)
 
     def _restore_layout(self) -> None:
         layout = self.theme_manager.get("layout", {})

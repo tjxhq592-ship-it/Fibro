@@ -20,6 +20,7 @@ from app.engine.search_engine import (
 from app.paths import INDEX_DB
 
 INDEX_MAX_AGE_SEC = 10 * 60  # これより古いインデックスは自動再構築
+MAX_RESULTS = 5000           # 一覧に積む上限（超過分は件数だけ数えて通知）
 
 _KIND_ICON = {
     SearchMode.FILENAME: "📁",
@@ -29,7 +30,8 @@ _KIND_ICON = {
 
 
 class SearchWorker(QThread):
-    hit = Signal(object)        # SearchHit
+    hit = Signal(object)        # SearchHit（後方互換のため残す、現在未使用）
+    hits_batch = Signal(list)   # 500件まとめて送信（大量ヒット対策）
     status = Signal(str)        # 進捗メッセージ
     finished_ok = Signal(int, int)  # scanned, skipped
 
@@ -52,11 +54,17 @@ class SearchWorker(QThread):
 
     def _run_scan(self) -> None:
         stats = SearchStats()
+        buf = []
         for h in search(self._root, self._options,
                         cancel=self._cancel, stats=stats):
             if self._cancel.is_set():
                 break
-            self.hit.emit(h)
+            buf.append(h)
+            if len(buf) >= 500:
+                self.hits_batch.emit(buf)
+                buf = []
+        if buf:
+            self.hits_batch.emit(buf)
         self.finished_ok.emit(stats.scanned, stats.skipped)
 
     def _run_indexed(self) -> None:
@@ -79,10 +87,16 @@ class SearchWorker(QThread):
                 if count < 0:  # キャンセル
                     self.finished_ok.emit(0, 0)
                     return
+            buf = []
             for path in index.query(self._root, self._options.keyword):
                 if self._cancel.is_set():
                     break
-                self.hit.emit(SearchHit(path, SearchMode.FILENAME))
+                buf.append(SearchHit(path, SearchMode.FILENAME))
+                if len(buf) >= 500:
+                    self.hits_batch.emit(buf)
+                    buf = []
+            if buf:
+                self.hits_batch.emit(buf)
             self.finished_ok.emit(max(count, 0), 0)
         finally:
             index.close()
@@ -101,6 +115,8 @@ class SearchPanel(QWidget):
         # 共有することで settings.json の単一ライターを保証する。
         self._settings = settings
         self._pending: list[QListWidgetItem] = []
+        self._total_hits = 0
+        self._capped = False
         self._flush_timer = QTimer(self)
         self._flush_timer.setInterval(100)  # 100ms ごと = 最大10回/秒
         self._flush_timer.timeout.connect(self._flush_hits)
@@ -228,9 +244,11 @@ class SearchPanel(QWidget):
                      and not options.case_sensitive
                      and options.recursive)
         self._pending.clear()
+        self._total_hits = 0
+        self._capped = False
         self._flush_timer.start()
         self._worker = SearchWorker(self._root, options, use_index, self)
-        self._worker.hit.connect(self._on_hit)
+        self._worker.hits_batch.connect(self._on_hits_batch)
         self._worker.status.connect(self.status_label.setText)
         self._worker.finished_ok.connect(self._on_finished)
         self._worker.start()
@@ -241,7 +259,7 @@ class SearchPanel(QWidget):
         if self._worker is not None:
             self._worker.cancel()
             try:
-                self._worker.hit.disconnect(self._on_hit)
+                self._worker.hits_batch.disconnect(self._on_hits_batch)
                 self._worker.finished_ok.disconnect(self._on_finished)
                 self._worker.status.disconnect(self.status_label.setText)
             except (RuntimeError, TypeError):
@@ -250,19 +268,27 @@ class SearchPanel(QWidget):
         self._worker = None
 
     # ---- 結果 ----
-    def _on_hit(self, hit: SearchHit) -> None:
-        rel = hit.path
-        try:
-            rel = str(Path(hit.path).relative_to(self._root))
-        except ValueError:
-            pass
-        text = f"{_KIND_ICON[hit.kind]} {rel}"
-        if hit.detail:
-            text += f"  —  {hit.detail}"
-        item = QListWidgetItem(text)
-        item.setData(Qt.ItemDataRole.UserRole, hit.path)
-        item.setToolTip(hit.path)
-        self._pending.append(item)
+    def _on_hits_batch(self, hits: list) -> None:
+        self._total_hits += len(hits)
+        room = MAX_RESULTS - (self.results.count() + len(self._pending))
+        if room <= 0:
+            self._capped = True
+            return
+        for hit in hits[:room]:
+            rel = hit.path
+            try:
+                rel = str(Path(hit.path).relative_to(self._root))
+            except ValueError:
+                pass
+            text = f"{_KIND_ICON[hit.kind]} {rel}"
+            if hit.detail:
+                text += f"  —  {hit.detail}"
+            item = QListWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, hit.path)
+            item.setToolTip(hit.path)
+            self._pending.append(item)
+        if len(hits) > room:
+            self._capped = True
 
     def _flush_hits(self) -> None:
         if not self._pending:
@@ -273,15 +299,24 @@ class SearchPanel(QWidget):
         for item in batch:
             self.results.addItem(item)
         self.results.setUpdatesEnabled(True)
-        self.status_label.setText(f"検索中… {self.results.count()}件")
+        if self._capped:
+            self.status_label.setText(
+                f"検索中… 上位{MAX_RESULTS}件を表示中"
+                f"（一致が多すぎます・絞り込んでください）")
+        else:
+            self.status_label.setText(f"検索中… {self.results.count()}件")
 
     def _on_finished(self, scanned: int, skipped: int) -> None:
         self._flush_hits()
         self._flush_timer.stop()
         self.search_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
-        text = (f"{self.results.count()}件ヒット "
-                f"（{scanned}ファイル走査")
+        if self._capped:
+            head = (f"一致{self._total_hits}件中 上位{MAX_RESULTS}件を表示"
+                    f"（多すぎます・絞り込んでください）")
+        else:
+            head = f"{self.results.count()}件ヒット"
+        text = f"{head} （{scanned}ファイル走査"
         if skipped:
             text += f"、{skipped}件スキップ"
         self.status_label.setText(text + "）")
