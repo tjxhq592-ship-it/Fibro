@@ -22,47 +22,68 @@ APP_FONT_SIZE_PT = 9
 # + border（細線）+ accent。dark/light で同じキー構成。
 TOKENS: dict[str, dict[str, str]] = {
     "dark": {
-        "bg": "#111318",
-        "surface": "#1A1D24",
-        "elevated": "#262B36",
+        "bg": "#1a1b1e",
+        "surface": "#1c1d21",
+        "elevated": "#1e1f24",
 
-        "border": "#343B49",
-        "border_str": "#505B71",
+        "border": "#2c2d32",
+        "border_str": "#34353a",
 
-        "text": "#F5F7FA",
-        "text_sub": "#B4BDCB",
-        "text_hint": "#798396",
+        "text": "#d6d8dd",
+        "text_sub": "#9598a0",
+        "text_hint": "#6b6d75",
 
-        "accent": "#4F8CFF",
+        "accent": "#5b9cf6",
 
-        "sel_bg": "rgba(79,140,255,0.28)",
-        "hover_bg": "rgba(255,255,255,0.10)",
+        "sel_bg": "rgba(91,156,246,0.20)",
+        "hover_bg": "rgba(255,255,255,0.05)",
 
-        "scrollbar": "#596275",
+        "scrollbar": "#3a3b40",
+
+        "status_ok": "#66bb6a",
+        "status_unchanged": "#9e9e9e",
+        "status_warn": "#ffa726",
+        "status_error": "#ef5350",
     },
     "light": {
-        "bg": "#EEF1F5",
-        "surface": "#FFFFFF",
-        "elevated": "#F6F8FB",
+        "bg": "#ffffff",
+        "surface": "#f5f6f8",
+        "elevated": "#f2f3f5",
 
-        "border": "#D6DCE7",
-        "border_str": "#AAB4C4",
+        "border": "#e3e5ea",
+        "border_str": "#d0d3da",
 
-        "text": "#111827",
-        "text_sub": "#4B5563",
-        "text_hint": "#7A8598",
+        "text": "#1f2329",
+        "text_sub": "#5c616b",
+        "text_hint": "#8b909a",
 
-        "accent": "#2563EB",
+        "accent": "#2f6fe0",
 
-        "sel_bg": "rgba(37,99,235,0.18)",
-        "hover_bg": "rgba(0,0,0,0.05)",
+        "sel_bg": "rgba(47,111,224,0.14)",
+        "hover_bg": "rgba(0,0,0,0.04)",
 
-        "scrollbar": "#B4BCC9",
+        "scrollbar": "#c7cad1",
+
+        "status_ok": "#2e7d32",
+        "status_unchanged": "#9e9e9e",
+        "status_warn": "#ef6c00",
+        "status_error": "#c62828",
     },
 }
 
 # 既存コードが import している定数（file_pane の枠線描画等）を維持。
 ACCENT = QColor(TOKENS["dark"]["accent"])
+
+
+def status_colors(theme: str = "light") -> dict[str, QColor]:
+    """ステータス表示用カラーをテーマ別に返す（rename_dialog 等で使用）。"""
+    t = TOKENS["dark"] if theme == "dark" else TOKENS["light"]
+    return {
+        "ok": QColor(t["status_ok"]),
+        "unchanged": QColor(t["status_unchanged"]),
+        "warn": QColor(t["status_warn"]),
+        "error": QColor(t["status_error"]),
+    }
 
 
 def app_font() -> QFont:

@@ -17,6 +17,7 @@ from app.engine.rename_engine import (
     CaseMode, RenameEngine, RenamePlan, RenameRule, Status, Target,
 )
 from app.engine.rename_history import RenameExecutor
+from app.gui.theme import status_colors
 from app.models.rename_presets import RenamePresetStore
 
 _STATUS_LABEL = {
@@ -26,13 +27,17 @@ _STATUS_LABEL = {
     Status.CONFLICT: "✗ 衝突",
     Status.INVALID: "✗ 無効な名前",
 }
-_STATUS_COLOR = {
-    Status.OK: QColor("#2e7d32"),
-    Status.UNCHANGED: QColor("#9e9e9e"),
-    Status.RESOLVED: QColor("#ef6c00"),
-    Status.CONFLICT: QColor("#c62828"),
-    Status.INVALID: QColor("#c62828"),
-}
+
+
+def _build_status_color(theme: str) -> dict[Status, QColor]:
+    sc = status_colors(theme)
+    return {
+        Status.OK: sc["ok"],
+        Status.UNCHANGED: sc["unchanged"],
+        Status.RESOLVED: sc["warn"],
+        Status.CONFLICT: sc["error"],
+        Status.INVALID: sc["error"],
+    }
 
 
 class RenameDialog(QDialog):
@@ -51,6 +56,9 @@ class RenameDialog(QDialog):
         self._executor = executor
         self._preset_store = preset_store
         self._plan: RenamePlan | None = None
+
+        _theme = getattr(getattr(parent, "theme_manager", None), "theme", "light")
+        self._status_color = _build_status_color(_theme)
 
         self._build_ui()
         if self._preset_store is not None:
@@ -249,7 +257,7 @@ class RenameDialog(QDialog):
                     (item.old_name, item.new_name,
                      _STATUS_LABEL[item.status])):
                 cell = QTableWidgetItem(text)
-                cell.setForeground(_STATUS_COLOR[item.status])
+                cell.setForeground(self._status_color[item.status])
                 self.table.setItem(row, col, cell)
 
         n_change = len(self._plan.changed_items)
