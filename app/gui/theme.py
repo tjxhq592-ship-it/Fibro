@@ -1,6 +1,7 @@
-"""ダーク/ライトテーマ。Fusion スタイル + QPalette で外部依存なし。
+"""ダーク/ライトテーマ。Fusion + QPalette + QSS で外部依存なし。
 
 設定は config/settings.json に永続化（破損時は既定ライトにフォールバック）。
+色は TOKENS（dark/light）に集約し、QPalette と QSS の両方を同じ値から生成する。
 """
 from __future__ import annotations
 
@@ -12,12 +13,46 @@ from PySide6.QtWidgets import QApplication
 
 from app.atomicio import atomic_write_text
 
-ACCENT = QColor("#3d7eff")
-
 # アプリ共通フォント。英数字=Segoe UI → 日本語=Yu Gothic UI の順でフォールバック。
-# setFamilies() は Qt 5.13+ で有効。pointSize はポイント指定なので高 DPI でも崩れない。
 APP_FONT_FAMILIES = ["Segoe UI", "Yu Gothic UI", "sans-serif"]
 APP_FONT_SIZE_PT = 9
+
+# --- デザイントークン -------------------------------------------------------
+# 3層の明度（bg=最暗 / surface=パネル / elevated=行ストライプ・タブ選択）
+# + border（細線）+ accent。dark/light で同じキー構成。
+TOKENS: dict[str, dict[str, str]] = {
+    "dark": {
+        "bg": "#1a1b1e",
+        "surface": "#1c1d21",
+        "elevated": "#1e1f24",
+        "border": "#2c2d32",
+        "border_str": "#34353a",
+        "text": "#d6d8dd",
+        "text_sub": "#9598a0",
+        "text_hint": "#6b6d75",
+        "accent": "#5b9cf6",
+        "sel_bg": "rgba(91,156,246,0.20)",
+        "hover_bg": "rgba(255,255,255,0.05)",
+        "scrollbar": "#3a3b40",
+    },
+    "light": {
+        "bg": "#ffffff",
+        "surface": "#f5f6f8",
+        "elevated": "#fafbfc",
+        "border": "#e3e5ea",
+        "border_str": "#d0d3da",
+        "text": "#1f2329",
+        "text_sub": "#5c616b",
+        "text_hint": "#8b909a",
+        "accent": "#2f6fe0",
+        "sel_bg": "rgba(47,111,224,0.14)",
+        "hover_bg": "rgba(0,0,0,0.04)",
+        "scrollbar": "#c7cad1",
+    },
+}
+
+# 既存コードが import している定数（file_pane の枠線描画等）を維持。
+ACCENT = QColor(TOKENS["dark"]["accent"])
 
 
 def app_font() -> QFont:
@@ -28,39 +63,154 @@ def app_font() -> QFont:
     return f
 
 
-def _dark_palette() -> QPalette:
+def _palette(t: dict[str, str]) -> QPalette:
+    """トークンから QPalette を生成（dark/light 共通）。"""
     p = QPalette()
-    window = QColor("#2b2d31")
-    base = QColor("#1e1f22")
-    text = QColor("#e8e8e8")
-    disabled = QColor("#7a7a7a")
-
-    # Active グループ
-    active_colors = {
+    window = QColor(t["surface"])
+    base = QColor(t["bg"])
+    alt = QColor(t["elevated"])
+    text = QColor(t["text"])
+    disabled = QColor(t["text_hint"])
+    accent = QColor(t["accent"])
+    roles = {
         QPalette.ColorRole.Window: window,
         QPalette.ColorRole.WindowText: text,
         QPalette.ColorRole.Base: base,
-        QPalette.ColorRole.AlternateBase: window,
+        QPalette.ColorRole.AlternateBase: alt,
         QPalette.ColorRole.Text: text,
         QPalette.ColorRole.Button: window,
         QPalette.ColorRole.ButtonText: text,
         QPalette.ColorRole.ToolTipBase: base,
         QPalette.ColorRole.ToolTipText: text,
         QPalette.ColorRole.PlaceholderText: disabled,
-        QPalette.ColorRole.Highlight: ACCENT,
+        QPalette.ColorRole.Highlight: accent,
         QPalette.ColorRole.HighlightedText: QColor("#ffffff"),
-        QPalette.ColorRole.Link: ACCENT,
+        QPalette.ColorRole.Link: accent,
+        QPalette.ColorRole.Mid: QColor(t["border"]),
     }
-    for role, color in active_colors.items():
+    for role, color in roles.items():
         p.setColor(QPalette.ColorGroup.Active, role, color)
-        # Inactive も同じ色で明示設定（未設定だと QPalette() 生成元＝旧パレットの値が残る）
+        # Inactive も同色で明示（未設定だと旧パレットの値が残る）
         p.setColor(QPalette.ColorGroup.Inactive, role, color)
-
-    # Disabled グループ
     for role in (QPalette.ColorRole.Text, QPalette.ColorRole.ButtonText,
                  QPalette.ColorRole.WindowText):
         p.setColor(QPalette.ColorGroup.Disabled, role, disabled)
     return p
+
+
+def _stylesheet(t: dict[str, str]) -> str:
+    """トークンからアプリ全体の QSS を生成（dark/light 共通）。"""
+    return f"""
+/* ---- ビュー（一覧 / ツリー / アイコン） ---- */
+QTreeView, QTreeWidget, QTableView, QListView {{
+    background-color: {t['bg']};
+    alternate-background-color: {t['elevated']};
+    color: {t['text']};
+    border: none;
+    outline: 0;
+    selection-background-color: {t['sel_bg']};
+    selection-color: {t['text']};
+}}
+QTableView::item, QTreeView::item, QTreeWidget::item, QListView::item {{
+    padding: 5px 6px;
+    border: none;
+    color: {t['text']};
+}}
+QTableView::item:hover, QTreeView::item:hover, QListView::item:hover {{
+    background-color: {t['hover_bg']};
+}}
+QTableView::item:selected, QTreeView::item:selected,
+QTreeWidget::item:selected, QListView::item:selected {{
+    background-color: {t['sel_bg']};
+    color: {t['text']};
+}}
+
+/* ---- 列ヘッダ ---- */
+QHeaderView::section {{
+    background-color: {t['surface']};
+    color: {t['text_sub']};
+    padding: 5px 8px;
+    border: none;
+    border-bottom: 1px solid {t['border']};
+    border-right: 1px solid {t['border']};
+    font-weight: 400;
+}}
+QHeaderView::section:hover {{ color: {t['text']}; }}
+
+/* ---- タブ ---- */
+QTabBar {{ qproperty-drawBase: 0; }}
+QTabBar::tab {{
+    background: transparent;
+    color: {t['text_sub']};
+    padding: 6px 14px;
+    margin-right: 2px;
+    border: none;
+    border-top: 2px solid transparent;
+}}
+QTabBar::tab:hover {{ background: {t['hover_bg']}; color: {t['text']}; }}
+QTabBar::tab:selected {{
+    background: {t['elevated']};
+    color: {t['text']};
+    border-top: 2px solid {t['accent']};
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+}}
+QTabBar::close-button {{ margin-left: 6px; subcontrol-position: right; }}
+QTabBar::close-button:hover {{
+    background: {t['hover_bg']};
+    border-radius: 3px;
+}}
+
+/* ---- 入力欄（フィルタ / パス直接入力 / ダイアログ） ---- */
+QLineEdit {{
+    background-color: {t['surface']};
+    color: {t['text']};
+    border: 1px solid {t['border_str']};
+    border-radius: 6px;
+    padding: 4px 8px;
+    selection-background-color: {t['accent']};
+    selection-color: #ffffff;
+}}
+QLineEdit:focus {{ border: 1px solid {t['accent']}; }}
+
+/* ---- ツールボタン（パンくず / ？ / アイコンボタン） ---- */
+QToolButton {{
+    background: transparent;
+    color: {t['text']};
+    border: none;
+    border-radius: 5px;
+    padding: 3px 6px;
+}}
+QToolButton:hover {{ background: {t['hover_bg']}; }}
+QToolButton:pressed {{ background: {t['sel_bg']}; }}
+
+/* ---- 折りたたみセクションのヘッダ（サイドバー見出し） ---- */
+#collapsibleHeader {{ padding: 3px 6px; }}
+#collapsibleHeader:hover {{ background: {t['hover_bg']}; }}
+
+/* ---- スプリッタの仕切り（点線ハンドル廃止→細線） ---- */
+QSplitter::handle {{ background-color: {t['border']}; }}
+QSplitter::handle:horizontal {{ width: 1px; }}
+QSplitter::handle:vertical {{ height: 1px; }}
+QSplitter::handle:hover {{ background-color: {t['accent']}; }}
+
+/* ---- スクロールバー（スリム・オーバーレイ風） ---- */
+QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}
+QScrollBar::handle:vertical {{
+    background: {t['scrollbar']}; border-radius: 5px; min-height: 28px;
+}}
+QScrollBar::handle:vertical:hover {{ background: {t['text_hint']}; }}
+QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 0; }}
+QScrollBar::handle:horizontal {{
+    background: {t['scrollbar']}; border-radius: 5px; min-width: 28px;
+}}
+QScrollBar::handle:horizontal:hover {{ background: {t['text_hint']}; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
+QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
+
+/* ---- ステータスのラベル（objectName で限定） ---- */
+QLabel#statusLabel {{ color: {t['text_sub']}; }}
+"""
 
 
 class ThemeManager:
@@ -95,31 +245,12 @@ class ThemeManager:
 
     def apply(self, app: QApplication, theme: str | None = None) -> None:
         theme = theme or self.theme
+        t = TOKENS["dark"] if theme == "dark" else TOKENS["light"]
         app.setStyle("Fusion")
-        # setStyle() 直後にフォントを再設定（スタイル変更でリセットされる環境への保険）
-        app.setFont(app_font())
-        # OS のタイトルバー（非クライアント領域）も Qt 経由で追従させる。
-        self._apply_color_scheme(app, theme)
-        if theme == "dark":
-            app.setPalette(_dark_palette())
-            # QPalette の伝播が非同期の OS コールバックで上書きされる場合があるため、
-            # スタイルシートでビュー系ウィジェットの文字色・背景色を明示的に固定する。
-            app.setStyleSheet(
-                "QTreeView, QTreeWidget, QTableView, QListView {"
-                "  color: #e8e8e8;"
-                "  background-color: #1e1f22;"
-                "}"
-                "QTreeView::item, QTreeWidget::item, QTableView::item {"
-                "  color: #e8e8e8;"
-                "}"
-                "QHeaderView::section {"
-                "  color: #e8e8e8;"
-                "  background-color: #2b2d31;"
-                "}"
-            )
-        else:
-            app.setPalette(app.style().standardPalette())
-            app.setStyleSheet("")
+        app.setFont(app_font())          # スタイル変更でリセットされる環境への保険
+        self._apply_color_scheme(app, theme)  # OS タイトルバー等を追従
+        app.setPalette(_palette(t))
+        app.setStyleSheet(_stylesheet(t))
         self._settings["theme"] = theme
         self._save()
 

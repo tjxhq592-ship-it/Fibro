@@ -117,6 +117,8 @@ class FilePane(QWidget):
         # 詳細ビュー（QTableView）
         self.table = FileTableView()
         self.table.setModel(self.proxy)
+        self.table.setAlternatingRowColors(True)
+        self.table.verticalHeader().setDefaultSectionSize(28)
         self.table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -178,7 +180,8 @@ class FilePane(QWidget):
         from PySide6.QtGui import QColor, QPainter, QPalette, QPen
         painter = QPainter(self)
         if self._active_border:
-            pen = QPen(QColor("#3d7eff"), 2)
+            from app.gui.theme import ACCENT
+            pen = QPen(ACCENT, 2)
         else:
             pen = QPen(self.palette().color(QPalette.ColorRole.Mid), 1)
         painter.setPen(pen)

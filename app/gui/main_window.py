@@ -343,6 +343,7 @@ class MainWindow(QMainWindow):
 
         # 3ペイン
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(1)
 
         self.tree = FolderTreeView()
         self.tree.setModel(self.tree_model)
@@ -385,6 +386,7 @@ class MainWindow(QMainWindow):
         self.secondary_pane.hide()
 
         self.pane_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.pane_splitter.setHandleWidth(1)
         self.pane_splitter.addWidget(self.primary_stack)
         self.pane_splitter.addWidget(self.secondary_pane)
 
@@ -414,6 +416,7 @@ class MainWindow(QMainWindow):
         self.recent_section = CollapsibleSection("履歴", self.recent_sidebar)
         self.tree_section = CollapsibleSection("フォルダツリー", self.tree)
         left = QSplitter(Qt.Orientation.Vertical)
+        left.setHandleWidth(1)
         left.addWidget(self.fav_section)
         left.addWidget(self.recent_section)
         left.addWidget(self.tree_section)
@@ -443,7 +446,9 @@ class MainWindow(QMainWindow):
         # 下部: ステータス（選択情報 + ドライブ空き容量）
         bottom = QHBoxLayout()
         self.selection_label = QLabel("選択: 0件")
+        self.selection_label.setObjectName("statusLabel")
         self.disk_label = QLabel("")
+        self.disk_label.setObjectName("statusLabel")
         bottom.addWidget(self.selection_label, stretch=1)
         bottom.addWidget(self.disk_label)
         root.addLayout(bottom)
