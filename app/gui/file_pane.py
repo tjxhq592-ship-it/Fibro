@@ -11,9 +11,10 @@ from pathlib import Path
 from PySide6.QtCore import (
     QDir, QEvent, QModelIndex, QSize, QSortFilterProxyModel, Qt, Signal,
 )
+from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import (
-    QAbstractItemView, QFileSystemModel, QMenu, QStackedLayout, QTableView,
-    QWidget,
+    QAbstractItemView, QFileSystemModel, QMenu, QStackedLayout, QStyle,
+    QStyledItemDelegate, QTableView, QWidget,
 )
 
 from app.gui.async_icons import shared_icon_provider
@@ -29,6 +30,22 @@ COLUMN_TITLES = {
     2: "種類",
     3: "更新日時",
 }
+
+
+class AccentBarDelegate(QStyledItemDelegate):
+    """選択行の左端に縦のアクセントバーを描く（詳細ビューの0列目専用）。"""
+
+    BAR_WIDTH = 3
+
+    def paint(self, painter, option, index):  # noqa: N802 — Qt API
+        super().paint(painter, option, index)
+        if not (option.state & QStyle.StateFlag.State_Selected):
+            return
+        accent = option.palette.color(QPalette.ColorRole.Highlight)
+        r = option.rect
+        painter.save()
+        painter.fillRect(r.left(), r.top(), self.BAR_WIDTH, r.height(), accent)
+        painter.restore()
 
 
 class CurrentDirFilterProxy(QSortFilterProxyModel):
@@ -126,6 +143,8 @@ class FilePane(QWidget):
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
         self.table.setIconSize(QSize(18, 18))  # 16: 種別アイコンを見やすく
+        self._accent_delegate = AccentBarDelegate(self.table)
+        self.table.setItemDelegateForColumn(0, self._accent_delegate)
         header = self.table.horizontalHeader()
         header.resizeSection(0, 280)
         header.setSectionsMovable(True)  # 18: 列の並べ替え
