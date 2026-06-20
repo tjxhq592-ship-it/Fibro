@@ -132,7 +132,6 @@ class BreadcrumbBar(QWidget):
 
         self._crumb_widget = _ClickableWidget()
         self._crumb_widget.setObjectName("pathBox")
-        self._crumb_widget.setAutoFillBackground(True)
         self._crumb_widget.clicked.connect(self._show_edit)
         self._crumb_layout = QHBoxLayout(self._crumb_widget)
         self._crumb_layout.setContentsMargins(6, 2, 6, 2)
@@ -337,6 +336,7 @@ class MainWindow(QMainWindow):
     # ---- UI ----
     def _build_ui(self) -> None:
         central = QWidget()
+        central.setObjectName("centralRoot")
         root = QVBoxLayout(central)
         root.setContentsMargins(6, 6, 6, 6)
 
@@ -349,7 +349,9 @@ class MainWindow(QMainWindow):
 
         # 3ペイン
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setHandleWidth(1)
+        splitter.setObjectName("mainSplitter")
+        splitter.setHandleWidth(10)
+        splitter.setChildrenCollapsible(False)
 
         self.tree = FolderTreeView()
         self.tree.setModel(self.tree_model)
@@ -403,9 +405,11 @@ class MainWindow(QMainWindow):
         self._filter_debounce.timeout.connect(self._apply_filter)
         self.filter_edit.textChanged.connect(self._filter_debounce.start)
 
-        right_area = QWidget()
+        right_area = QFrame()
+        right_area.setObjectName("rightContentBox")
+        right_area.setFrameShape(QFrame.Shape.NoFrame)
         right_layout = QVBoxLayout(right_area)
-        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setContentsMargins(8, 8, 8, 8)
         right_layout.setSpacing(2)
         right_layout.addLayout(tab_row)
         right_layout.addWidget(self.filter_edit)
@@ -439,7 +443,7 @@ class MainWindow(QMainWindow):
         left_box.setObjectName("leftSidebarBox")
         left_box.setFrameShape(QFrame.Shape.NoFrame)
         left_box_layout = QVBoxLayout(left_box)
-        left_box_layout.setContentsMargins(0, 0, 0, 0)
+        left_box_layout.setContentsMargins(8, 8, 8, 8)
         left_box_layout.setSpacing(0)
         left_box_layout.addWidget(left)
         splitter.addWidget(left_box)

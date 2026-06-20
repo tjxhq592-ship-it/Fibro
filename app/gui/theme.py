@@ -22,23 +22,26 @@ APP_FONT_SIZE_PT = 9
 # + border（細線）+ accent。dark/light で同じキー構成。
 TOKENS: dict[str, dict[str, str]] = {
     "dark": {
-        "bg": "#1a1b1e",
-        "surface": "#1c1d21",
-        "elevated": "#1e1f24",
+        "bg": "#16171a",
+        "surface": "#1e2024",
+        "elevated": "#262830",
 
-        "border": "#2c2d32",
-        "border_str": "#34353a",
+        "app_base": "#141518",
+        "card": "#1c1d21",
 
-        "text": "#d6d8dd",
-        "text_sub": "#9598a0",
-        "text_hint": "#6b6d75",
+        "border": "#34363d",
+        "border_str": "#3f424a",
+
+        "text": "#e3e5ea",
+        "text_sub": "#a0a4ad",
+        "text_hint": "#70737c",
 
         "accent": "#5b9cf6",
 
-        "sel_bg": "rgba(91,156,246,0.20)",
-        "hover_bg": "rgba(255,255,255,0.05)",
+        "sel_bg": "rgba(91,156,246,0.28)",
+        "hover_bg": "rgba(255,255,255,0.07)",
 
-        "scrollbar": "#3a3b40",
+        "scrollbar": "#4a4d55",
 
         "status_ok": "#66bb6a",
         "status_unchanged": "#9e9e9e",
@@ -49,6 +52,9 @@ TOKENS: dict[str, dict[str, str]] = {
         "bg": "#ffffff",
         "surface": "#f5f6f8",
         "elevated": "#f2f3f5",
+
+        "app_base": "#eceef1",
+        "card": "#ffffff",
 
         "border": "#e3e5ea",
         "border_str": "#d0d3da",
@@ -184,28 +190,33 @@ QHeaderView::section:hover {{
 /* ---- タブ ---- */
 QTabBar {{
     qproperty-drawBase: 0;
+    border-bottom: 1px solid {t['border']};
 }}
 
 QTabBar::tab {{
-    background: transparent;
+    background: {t['surface']};
     color: {t['text_sub']};
     padding: 6px 14px;
     margin-right: 2px;
-    border: none;
-    border-top: 2px solid transparent;
+    border: 1px solid {t['border']};
+    border-bottom: none;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
 }}
 
 QTabBar::tab:hover {{
-    background: {t['hover_bg']};
+    background: {t['elevated']};
     color: {t['text']};
 }}
 
 QTabBar::tab:selected {{
     background: {t['elevated']};
     color: {t['text']};
+    border: 1px solid {t['border']};
+    border-bottom: none;
     border-top: 2px solid {t['accent']};
-    border-top-left-radius: 6px;
-    border-top-right-radius: 6px;
+    border-top-left-radius: 0px;
+    border-top-right-radius: 0px;
 }}
 
 QTabBar::close-button {{
@@ -250,10 +261,21 @@ QToolButton:pressed {{
     background: {t['sel_bg']};
 }}
 
-/* ---- サイドバーボックス（VSCode 風 外枠） ---- */
-#leftSidebarBox {{
-    border: 1px solid {t['border_str']};
-    background: {t['bg']};
+/* ---- アプリのベース背景（カード間の余白に見える層） ---- */
+QMainWindow, QWidget#centralRoot {{
+    background-color: {t['app_base']};
+}}
+
+/* ---- カード（左サイドバー / 右メイン） ---- */
+#leftSidebarBox, #rightContentBox {{
+    background-color: {t['card']};
+    border: 1px solid {t['border']};
+    border-radius: 8px;
+}}
+
+/* ---- メインスプリッタのハンドルはベース背景を透過 ---- */
+QSplitter#mainSplitter::handle {{
+    background-color: transparent;
 }}
 
 /* ---- 折りたたみセクションのヘッダ（サイドバー見出し） ---- */
@@ -349,8 +371,8 @@ QToolButton#tabClose:hover {{
 
 /* ---- パスボックス（パンくずバー枠） ---- */
 QFrame#pathBox {{
-    background: #ffffff;
-    border: 1px solid {t['border_str']};
+    background: {t['surface']};
+    border: 1px solid {t['border']};
     border-radius: 6px;
 }}
 
@@ -364,7 +386,7 @@ QFrame#pathBox QToolButton {{
 QFrame#pathBox QLabel {{
     background: transparent;
     border: none;
-    color: {t['text_sub']};
+    color: {t['text_hint']};
 }}
 """
 
