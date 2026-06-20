@@ -17,7 +17,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QDialog, QDialogButtonBox, QDockWidget, QFileSystemModel,
-    QFormLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow,
+    QFormLayout, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow,
     QMenu, QMessageBox, QSizePolicy, QSplitter, QStackedLayout, QStackedWidget,
     QStatusBar, QStyle, QTabBar, QToolButton, QTreeView, QVBoxLayout, QWidget,
 )
@@ -113,6 +113,14 @@ class SingleRenameDialog(QDialog):
         return (dlg.new_name() if ok else ""), ok
 
 
+class _ClickableWidget(QFrame):
+    clicked = Signal()
+
+    def mousePressEvent(self, event) -> None:
+        self.clicked.emit()
+        super().mousePressEvent(event)
+
+
 class BreadcrumbBar(QWidget):
     """パンくずバー。クリックで切替、ダブルクリック相当でパス直接入力。"""
 
@@ -122,9 +130,12 @@ class BreadcrumbBar(QWidget):
         super().__init__(parent)
         self._stack = QStackedLayout(self)
 
-        self._crumb_widget = QWidget()
+        self._crumb_widget = _ClickableWidget()
+        self._crumb_widget.setObjectName("pathBox")
+        self._crumb_widget.setAutoFillBackground(True)
+        self._crumb_widget.clicked.connect(self._show_edit)
         self._crumb_layout = QHBoxLayout(self._crumb_widget)
-        self._crumb_layout.setContentsMargins(4, 0, 4, 0)
+        self._crumb_layout.setContentsMargins(6, 2, 6, 2)
         self._crumb_layout.setSpacing(0)
 
         self._edit = QLineEdit()
@@ -153,11 +164,6 @@ class BreadcrumbBar(QWidget):
             self._crumb_layout.addWidget(btn)
             if i < len(parts) - 1:
                 self._crumb_layout.addWidget(QLabel("›"))
-        edit_btn = QToolButton(text="✎")
-        edit_btn.setAutoRaise(True)
-        edit_btn.setToolTip("パスを直接入力")
-        edit_btn.clicked.connect(self._show_edit)
-        self._crumb_layout.addWidget(edit_btn)
         self._crumb_layout.addStretch()
         self._stack.setCurrentWidget(self._crumb_widget)
 
@@ -429,7 +435,14 @@ class MainWindow(QMainWindow):
         for sec in (self.fav_section, self.recent_section, self.tree_section):
             sec.toggled.connect(lambda _checked: self._save_layout())
 
-        splitter.addWidget(left)
+        left_box = QFrame()
+        left_box.setObjectName("leftSidebarBox")
+        left_box.setFrameShape(QFrame.Shape.NoFrame)
+        left_box_layout = QVBoxLayout(left_box)
+        left_box_layout.setContentsMargins(0, 0, 0, 0)
+        left_box_layout.setSpacing(0)
+        left_box_layout.addWidget(left)
+        splitter.addWidget(left_box)
         splitter.addWidget(right_area)
         splitter.setSizes([220, 860])
         root.addWidget(splitter, stretch=1)

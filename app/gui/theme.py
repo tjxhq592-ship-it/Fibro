@@ -250,13 +250,23 @@ QToolButton:pressed {{
     background: {t['sel_bg']};
 }}
 
+/* ---- サイドバーボックス（VSCode 風 外枠） ---- */
+#leftSidebarBox {{
+    border: 1px solid {t['border_str']};
+    background: {t['bg']};
+}}
+
 /* ---- 折りたたみセクションのヘッダ（サイドバー見出し） ---- */
 #collapsibleHeader {{
-    padding: 3px 6px;
+    padding: 4px 8px;
+    background-color: {t['surface']};
+    font-size: 11px;
+    color: {t['text_sub']};
 }}
 
 #collapsibleHeader:hover {{
-    background: {t['hover_bg']};
+    background: {t['elevated']};
+    color: {t['text']};
 }}
 
 /* ---- スプリッタの仕切り（点線ハンドル廃止→細線） ---- */
@@ -336,6 +346,26 @@ QToolButton#tabClose {{
 QToolButton#tabClose:hover {{
     color: {t['text']};
     background: {t['hover_bg']};
+}}
+
+/* ---- パスボックス（パンくずバー枠） ---- */
+QFrame#pathBox {{
+    background: #ffffff;
+    border: 1px solid {t['border_str']};
+    border-radius: 6px;
+}}
+
+QFrame#pathBox QToolButton {{
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    color: {t['text']};
+}}
+
+QFrame#pathBox QLabel {{
+    background: transparent;
+    border: none;
+    color: {t['text_sub']};
 }}
 """
 

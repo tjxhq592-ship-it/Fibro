@@ -25,20 +25,17 @@ class _HeaderBar(QFrame):
         super().__init__(parent)
         self.setObjectName("collapsibleHeader")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        # ホバーで薄く反転。テーマ（ダーク/ライト）に依存しない最小スタイル。
-        self.setStyleSheet(
-            "#collapsibleHeader { padding: 3px 6px; }"
-            "#collapsibleHeader:hover { background: rgba(127,127,127,0.18); }")
 
         row = QHBoxLayout(self)
-        row.setContentsMargins(6, 3, 6, 3)
-        self._title = QLabel(f"<b>{title}</b>")
-        self._chevron = QLabel("∨")
-        row.addWidget(self._title, stretch=1)
+        row.setContentsMargins(8, 4, 8, 4)
+        self._chevron = QLabel("▽")
+        self._chevron.setFixedWidth(16)
+        self._title = QLabel(title.upper())
         row.addWidget(self._chevron)
+        row.addWidget(self._title, stretch=1)
 
     def set_collapsed(self, collapsed: bool) -> None:
-        self._chevron.setText("∧" if collapsed else "∨")
+        self._chevron.setText("▷" if collapsed else "▽")
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 — Qt API
         if event.button() == Qt.MouseButton.LeftButton:
