@@ -83,3 +83,11 @@ class CollapsibleSection(QWidget):
             self.setMaximumHeight(self._header.sizeHint().height())
         else:
             self.setMaximumHeight(_QWIDGETSIZE_MAX)
+
+    def set_header_height(self, height: int) -> None:
+        """見出しバーの高さを固定する（タブ行と高さを揃える用）。"""
+        self._header.setFixedHeight(height)
+        lay = self._header.layout()
+        if lay is not None:
+            m = lay.contentsMargins()
+            lay.setContentsMargins(m.left(), 0, m.right(), 0)

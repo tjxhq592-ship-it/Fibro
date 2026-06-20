@@ -18,7 +18,7 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QDialog, QDialogButtonBox, QDockWidget, QFileSystemModel,
     QFormLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow,
-    QMenu, QMessageBox, QSplitter, QStackedLayout, QStackedWidget,
+    QMenu, QMessageBox, QSizePolicy, QSplitter, QStackedLayout, QStackedWidget,
     QStatusBar, QStyle, QTabBar, QToolButton, QTreeView, QVBoxLayout, QWidget,
 )
 
@@ -419,7 +419,13 @@ class MainWindow(QMainWindow):
         left.addWidget(self.fav_section)
         left.addWidget(self.recent_section)
         left.addWidget(self.tree_section)
-        left.setSizes([160, 160, 320])
+        # 全セクション折りたたみ時に左ペインが縦に潰れないよう、
+        # 余白を吸収する伸縮スペーサーを最下段に置く（初期高さ0）。
+        left_spacer = QWidget()
+        left_spacer.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        left.addWidget(left_spacer)
+        left.setSizes([160, 160, 320, 0])
         for sec in (self.fav_section, self.recent_section, self.tree_section):
             sec.toggled.connect(lambda _checked: self._save_layout())
 
@@ -430,6 +436,8 @@ class MainWindow(QMainWindow):
         self._main_splitter = splitter
         self._left_splitter = left
         self._restore_layout()
+        # タブ行の実高さにサイドバー見出しの高さを合わせる（QSS 適用後に実行）。
+        QTimer.singleShot(0, self._align_section_headers)
 
         # 各パネルの Ctrl+ホイール ズーム（75〜200%・倍率は settings に保存）
         from app.gui.zoom import ZoomController
@@ -1495,6 +1503,14 @@ class MainWindow(QMainWindow):
                 self.setGeometry(*[int(v) for v in geo])
             except (TypeError, ValueError):
                 pass
+
+    def _align_section_headers(self) -> None:
+        """サイドバー見出しの高さをタブ行の実高さに合わせる。"""
+        h = self.tab_bar.sizeHint().height()
+        if h <= 0:
+            return
+        for sec in (self.fav_section, self.recent_section, self.tree_section):
+            sec.set_header_height(h)
 
     def _save_layout(self) -> None:
         g = self.geometry()

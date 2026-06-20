@@ -163,7 +163,7 @@ QTabBar::close-button:hover {{
 
 /* ---- 入力欄（フィルタ / パス直接入力 / ダイアログ） ---- */
 QLineEdit {{
-    background-color: {t['surface']};
+    background-color: {t['bg']};
     color: {t['text']};
     border: 1px solid {t['border_str']};
     border-radius: 6px;
