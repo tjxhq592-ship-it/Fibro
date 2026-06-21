@@ -68,7 +68,7 @@
  [],
  False,
  False,
- 1781994717,
+ 1782040397,
  [('runw.exe',
    'C:\\Users\\hiros\\projects\\Fibro\\.venv\\Lib\\site-packages\\PyInstaller\\bootloader\\Windows-64bit-intel\\runw.exe',
    'EXECUTABLE')],

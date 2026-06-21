@@ -381,6 +381,25 @@ class TestToolbarRemovalAndShortcuts:
         seqs = {a.shortcut().toString() for a in win.actions()}
         assert {"Alt+Left", "Alt+Right", "Alt+Up"} <= seqs
 
+    def test_shortcuts_button_present(self, qapp, tmp_path, monkeypatch):
+        """パンくず行右端にショートカット一覧ボタンがある。"""
+        win = _make_window(tmp_path, monkeypatch)
+        assert hasattr(win, "shortcuts_btn")
+        assert not win.shortcuts_btn.icon().isNull()
+
+    def test_show_shortcuts_popup(self, qapp, tmp_path, monkeypatch):
+        """_show_shortcuts がショートカット一覧ダイアログを生成する。"""
+        from PySide6.QtWidgets import QDialog, QLabel
+        win = _make_window(tmp_path, monkeypatch)
+        win._show_shortcuts()
+        dialogs = win.findChildren(QDialog)
+        popup = next(d for d in dialogs
+                     if d.windowTitle() == "ショートカット一覧")
+        texts = {lbl.text() for lbl in popup.findChildren(QLabel)}
+        assert "ファイル操作" in texts
+        assert "Ctrl+C" in texts
+        popup.close()
+
     def test_theme_toggle_in_settings_menu(self, qapp, tmp_path, monkeypatch):
         from PySide6.QtWidgets import QMenu
         win = _make_window(tmp_path, monkeypatch)
