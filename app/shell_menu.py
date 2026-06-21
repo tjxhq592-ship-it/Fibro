@@ -79,6 +79,27 @@ def show_combined_menu(hwnd: int, paths: list[str], x: int, y: int,
         return False, None
 
 
+def show_new_menu(hwnd: int, folder_path: str, x: int, y: int,
+                  fibro_items: list) -> tuple[bool, str | None]:
+    """Windows 本物の「新規作成」(CNewMenu) ＋ Fibro 追加項目を統合表示。
+
+    空白右クリック用。シェル拡張 CNewMenu を直接ホストし、フォルダー/ショートカット/
+    各ファイル型/Google Docs 等を Explorer と同一に列挙・作成する。
+    fibro_items は show_combined_menu と同じノード形式。
+    戻り値 (ok, key):
+      ok=False → 表示失敗（呼び出し側で従来 QMenu へフォールバック）
+      ok=True, key=str → Fibro 項目が選ばれた
+      ok=True, key="__created__" → シェル New 項目が実行されファイル作成された
+      ok=True, key=None → キャンセル
+    """
+    if not is_supported() or not folder_path:
+        return False, None
+    try:
+        return _new_menu(hwnd, folder_path, x, y, fibro_items)
+    except Exception:  # noqa: BLE001 — どんな COM/ctypes 失敗もフォールバック
+        return False, None
+
+
 # --- 以下 ctypes COM 実装 -------------------------------------------------
 
 def _show(hwnd: int, paths: list[str], x: int, y: int) -> bool:
@@ -614,4 +635,270 @@ def _combined(hwnd: int, paths: list[str], x: int, y: int,
         release(parent)
         for fp in full_pidls:
             CoTaskMemFree(fp)
+        ole32.CoUninitialize()
+
+
+def _new_menu(hwnd: int, folder_path: str, x: int, y: int,
+              fibro_items: list) -> "tuple[bool, str | None]":
+    """CNewMenu シェル拡張をホストし、Fibro 項目を足したネイティブメニューを表示。"""
+    import ctypes
+    import os
+    from ctypes import POINTER, byref, c_void_p, c_wchar_p
+    from ctypes.wintypes import HMENU, HWND, INT, LPARAM, UINT, WPARAM
+
+    ole32 = ctypes.OleDLL("ole32")
+    shell32 = ctypes.WinDLL("shell32")
+    user32 = ctypes.WinDLL("user32")
+
+    S_OK = 0
+    CMF_NORMAL = 0x00000000
+    TPM_RETURNCMD = 0x0100
+    TPM_RIGHTBUTTON = 0x0002
+    SW_SHOWNORMAL = 1
+    CLSCTX_INPROC_SERVER = 0x1
+    ID_FIRST = 1
+    ID_LAST = 0x7FFF
+    FIBRO_ID_BASE = 0xE000
+    MF_STRING = 0x0000
+    MF_SEPARATOR = 0x0800
+    GWLP_WNDPROC = -4
+    WM_INITMENUPOPUP = 0x0117
+    WM_DRAWITEM = 0x002B
+    WM_MEASUREITEM = 0x002C
+    WM_MENUCHAR = 0x0120
+    REL = 2
+    QI = 0                     # IUnknown::QueryInterface
+    SEI_INITIALIZE = 3         # IShellExtInit::Initialize
+    CM_QUERY = 3               # IContextMenu::QueryContextMenu
+    CM_INVOKE = 4              # IContextMenu::InvokeCommand
+    CM2_HANDLE = 6             # IContextMenu2::HandleMenuMsg
+    CM3_HANDLE2 = 7            # IContextMenu3::HandleMenuMsg2
+
+    def vtbl_call(ptr, index, restype, argtypes):
+        vtbl = ctypes.cast(ptr, POINTER(c_void_p))
+        func_ptr = ctypes.cast(vtbl[0], POINTER(c_void_p))[index]
+        return ctypes.WINFUNCTYPE(restype, *argtypes)(func_ptr)
+
+    def release(ptr):
+        if ptr:
+            vtbl_call(ptr, REL, ctypes.c_ulong, (c_void_p,))(ptr)
+
+    class GUID(ctypes.Structure):
+        _fields_ = [("Data1", ctypes.c_uint32), ("Data2", ctypes.c_uint16),
+                    ("Data3", ctypes.c_uint16), ("Data4", ctypes.c_ubyte * 8)]
+
+    def guid(s: str) -> GUID:
+        g = GUID()
+        ole32.IIDFromString(c_wchar_p(s), byref(g))
+        return g
+
+    CLSID_NewMenu = guid("{D969A300-E7FF-11D0-A93B-00A0C90F2719}")
+    IID_IShellExtInit = guid("{000214E8-0000-0000-C000-000000000046}")
+    IID_IContextMenu = guid("{000214E4-0000-0000-C000-000000000046}")
+    IID_IContextMenu2 = guid("{000214F4-0000-0000-C000-000000000046}")
+    IID_IContextMenu3 = guid("{BCFCE0A0-EC17-11D0-8D10-00A0C90F2719}")
+
+    shell32.SHParseDisplayName.restype = ctypes.HRESULT
+    shell32.SHParseDisplayName.argtypes = [
+        c_wchar_p, c_void_p, POINTER(c_void_p), ctypes.c_ulong,
+        POINTER(ctypes.c_ulong)]
+    CoTaskMemFree = ole32.CoTaskMemFree
+    CoTaskMemFree.argtypes = [c_void_p]
+    ole32.CoCreateInstance.restype = ctypes.HRESULT
+    ole32.CoCreateInstance.argtypes = [
+        POINTER(GUID), c_void_p, ctypes.c_ulong, POINTER(GUID),
+        POINTER(c_void_p)]
+    user32.AppendMenuW.argtypes = [HMENU, UINT, ctypes.c_size_t, c_wchar_p]
+    user32.AppendMenuW.restype = ctypes.c_bool
+    user32.CreatePopupMenu.restype = HMENU
+    LRESULT = ctypes.c_ssize_t
+    user32.CallWindowProcW.restype = LRESULT
+    user32.CallWindowProcW.argtypes = [
+        c_void_p, HWND, UINT, WPARAM, LPARAM]
+    user32.SetWindowLongPtrW.restype = c_void_p
+    user32.SetWindowLongPtrW.argtypes = [HWND, INT, c_void_p]
+    user32.GetWindowLongPtrW.restype = c_void_p
+    user32.GetWindowLongPtrW.argtypes = [HWND, INT]
+
+    ole32.CoInitialize(None)
+    pidl = c_void_p()
+    psei = c_void_p()
+    pcm = c_void_p()
+    pcm2 = c_void_p()
+    pcm3 = c_void_p()
+    hmenu = None
+    old_proc = None
+    wndproc_ref = None  # GC 回避のため保持
+    id_to_key: dict = {}
+    try:
+        # フォルダ PIDL
+        attrs = ctypes.c_ulong(0)
+        if shell32.SHParseDisplayName(
+                c_wchar_p(os.path.normpath(folder_path)), None, byref(pidl), 0,
+                byref(attrs)) != S_OK or not pidl:
+            return False, None
+
+        # CNewMenu を生成し IShellExtInit::Initialize(folder)
+        if ole32.CoCreateInstance(
+                byref(CLSID_NewMenu), None, CLSCTX_INPROC_SERVER,
+                byref(IID_IShellExtInit), byref(psei)) != S_OK or not psei:
+            return False, None
+        sei_init = vtbl_call(
+            psei, SEI_INITIALIZE, ctypes.HRESULT,
+            (c_void_p, c_void_p, c_void_p, c_void_p))
+        if sei_init(psei, pidl, None, None) != S_OK:
+            return False, None
+
+        # IContextMenu / 2 / 3 を取得
+        qi = vtbl_call(psei, QI, ctypes.HRESULT,
+                       (c_void_p, POINTER(GUID), POINTER(c_void_p)))
+        if qi(psei, byref(IID_IContextMenu), byref(pcm)) != S_OK or not pcm:
+            return False, None
+        qi2 = vtbl_call(pcm, QI, ctypes.HRESULT,
+                        (c_void_p, POINTER(GUID), POINTER(c_void_p)))
+        qi2(pcm, byref(IID_IContextMenu2), byref(pcm2))
+        qi2(pcm, byref(IID_IContextMenu3), byref(pcm3))
+
+        # 自前 hmenu に CNewMenu の項目を挿入させる
+        hmenu = user32.CreatePopupMenu()
+        query = vtbl_call(
+            pcm, CM_QUERY, ctypes.HRESULT,
+            (c_void_p, HMENU, UINT, UINT, UINT, UINT))
+        if query(pcm, HMENU(hmenu), UINT(0), UINT(ID_FIRST), UINT(ID_LAST),
+                 UINT(CMF_NORMAL)) < 0:
+            return False, None
+        if user32.GetMenuItemCount(HMENU(hmenu)) <= 0:
+            return False, None
+
+        # CNewMenu の「新規作成 ▶」サブメニュー（位置0）のハンドルを控える。
+        # これに限定して WM_INITMENUPOPUP を転送しないと、トップメニューへ
+        # ファイル型項目が直接挿入され平坦化する。
+        user32.GetSubMenu.restype = HMENU
+        user32.GetSubMenu.argtypes = [HMENU, INT]
+        hsub = user32.GetSubMenu(HMENU(hmenu), 0)
+        hsub_handle = int(hsub) if hsub else 0
+
+        # Fibro 追加項目を末尾に
+        if fibro_items:
+            next_id = FIBRO_ID_BASE
+            user32.AppendMenuW(HMENU(hmenu), UINT(MF_SEPARATOR), 0, None)
+            for node in fibro_items:
+                if node.get("type") == "sep":
+                    user32.AppendMenuW(HMENU(hmenu), UINT(MF_SEPARATOR), 0, None)
+                    continue
+                fid = next_id
+                next_id += 1
+                id_to_key[fid] = node["key"]
+                user32.AppendMenuW(HMENU(hmenu), UINT(MF_STRING),
+                                   ctypes.c_size_t(fid), c_wchar_p(node["label"]))
+
+        # CNewMenu の遅延サブメニュー/オーナードローのため WNDPROC を一時差し替え
+        handle3 = vtbl_call(
+            pcm3, CM3_HANDLE2, ctypes.HRESULT,
+            (c_void_p, UINT, WPARAM, LPARAM, POINTER(LRESULT))) if pcm3 else None
+        handle2 = vtbl_call(
+            pcm2, CM2_HANDLE, ctypes.HRESULT,
+            (c_void_p, UINT, WPARAM, LPARAM)) if pcm2 else None
+
+        # New サブメニューだけを事前展開（ライブ転送に依存せず中身を実体化）。
+        if hsub_handle:
+            try:
+                if handle3 is not None:
+                    res = LRESULT(0)
+                    handle3(pcm3, UINT(WM_INITMENUPOPUP),
+                            WPARAM(hsub_handle), LPARAM(0), byref(res))
+                elif handle2 is not None:
+                    handle2(pcm2, UINT(WM_INITMENUPOPUP),
+                            WPARAM(hsub_handle), LPARAM(0))
+            except OSError:
+                pass
+
+        WNDPROC = ctypes.WINFUNCTYPE(LRESULT, HWND, UINT, WPARAM, LPARAM)
+        forwarded = (WM_INITMENUPOPUP, WM_DRAWITEM, WM_MEASUREITEM, WM_MENUCHAR)
+
+        def _proc(h, msg, wp, lp):
+            # WM_INITMENUPOPUP は CNewMenu 自身のサブメニュー(hsub)に対してのみ転送。
+            # トップメニュー等を転送すると CNewMenu がそこへ項目を挿入し平坦化する。
+            if msg == WM_INITMENUPOPUP and int(wp) != hsub_handle:
+                return user32.CallWindowProcW(old_proc, h, UINT(msg),
+                                              WPARAM(wp), LPARAM(lp))
+            if msg in forwarded:
+                try:
+                    if handle3 is not None:
+                        res = LRESULT(0)
+                        if handle3(pcm3, UINT(msg), WPARAM(wp), LPARAM(lp),
+                                   byref(res)) == S_OK:
+                            if msg in (WM_DRAWITEM, WM_MEASUREITEM):
+                                return 1
+                            if msg in (WM_MENUCHAR, WM_INITMENUPOPUP):
+                                return res.value
+                    elif handle2 is not None:
+                        handle2(pcm2, UINT(msg), WPARAM(wp), LPARAM(lp))
+                        if msg in (WM_DRAWITEM, WM_MEASUREITEM):
+                            return 1
+                except OSError:
+                    pass
+            return user32.CallWindowProcW(old_proc, h, UINT(msg),
+                                          WPARAM(wp), LPARAM(lp))
+
+        wndproc_ref = WNDPROC(_proc)
+        if pcm2 or pcm3:
+            old_proc = user32.GetWindowLongPtrW(HWND(hwnd), INT(GWLP_WNDPROC))
+            new_ptr = ctypes.cast(wndproc_ref, c_void_p)
+            user32.SetWindowLongPtrW(HWND(hwnd), INT(GWLP_WNDPROC), new_ptr)
+
+        user32.SetForegroundWindow(HWND(hwnd))
+        user32.TrackPopupMenuEx.restype = INT
+        user32.TrackPopupMenuEx.argtypes = [
+            HMENU, UINT, INT, INT, HWND, c_void_p]
+        cmd = user32.TrackPopupMenuEx(
+            HMENU(hmenu), UINT(TPM_RETURNCMD | TPM_RIGHTBUTTON),
+            INT(x), INT(y), HWND(hwnd), None)
+
+        # WNDPROC を即復元（InvokeCommand 前に戻す）
+        if old_proc is not None:
+            user32.SetWindowLongPtrW(
+                HWND(hwnd), INT(GWLP_WNDPROC), old_proc)
+            old_proc = None
+
+        if cmd >= FIBRO_ID_BASE:
+            return True, id_to_key.get(int(cmd))
+        if cmd > 0:
+            class CMINVOKECOMMANDINFO(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", ctypes.c_uint32),
+                    ("fMask", ctypes.c_uint32),
+                    ("hwnd", c_void_p),
+                    ("lpVerb", ctypes.c_char_p),
+                    ("lpParameters", ctypes.c_char_p),
+                    ("lpDirectory", ctypes.c_char_p),
+                    ("nShow", ctypes.c_int),
+                    ("dwHotKey", ctypes.c_uint32),
+                    ("hIcon", c_void_p)]
+
+            info = CMINVOKECOMMANDINFO()
+            info.cbSize = ctypes.sizeof(CMINVOKECOMMANDINFO)
+            info.fMask = 0
+            info.hwnd = hwnd
+            info.lpVerb = ctypes.cast(
+                ctypes.c_void_p(cmd - ID_FIRST), ctypes.c_char_p)
+            info.nShow = SW_SHOWNORMAL
+            invoke = vtbl_call(
+                pcm, CM_INVOKE, ctypes.HRESULT,
+                (c_void_p, POINTER(CMINVOKECOMMANDINFO)))
+            invoke(pcm, byref(info))
+            return True, "__created__"
+        return True, None
+    finally:
+        if old_proc is not None:
+            user32.SetWindowLongPtrW(
+                HWND(hwnd), INT(GWLP_WNDPROC), old_proc)
+        if hmenu:
+            user32.DestroyMenu(HMENU(hmenu))
+        release(pcm3)
+        release(pcm2)
+        release(pcm)
+        release(psei)
+        if pidl:
+            CoTaskMemFree(pidl)
         ole32.CoUninitialize()

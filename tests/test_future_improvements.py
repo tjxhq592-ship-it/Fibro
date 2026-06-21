@@ -212,3 +212,10 @@ class TestIcons:
             for dark in (False, True):
                 icon = feather_icon(name, dark)
                 assert not icon.isNull(), f"{name} (dark={dark})"
+
+    def test_material_icons_render(self, qapp):
+        from app.gui.icons import _MATERIAL_PATHS, material_icon
+        for name in _MATERIAL_PATHS:
+            for dark in (False, True):
+                icon = material_icon(name, dark)
+                assert not icon.isNull(), f"{name} (dark={dark})"

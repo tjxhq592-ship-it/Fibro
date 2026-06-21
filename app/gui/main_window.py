@@ -11,15 +11,17 @@ import subprocess
 from pathlib import Path
 
 from PySide6.QtCore import (
-    QDir, QItemSelectionModel, QModelIndex, QRunnable, Qt, QThreadPool, QTimer,
-    Signal,
+    QDir, QFileInfo, QItemSelectionModel, QModelIndex, QRunnable, Qt,
+    QThreadPool, QTimer, Signal,
 )
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QDialogButtonBox, QDockWidget, QFileSystemModel,
-    QFormLayout, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow,
-    QMenu, QMessageBox, QSizePolicy, QSplitter, QStackedLayout, QStackedWidget,
-    QStatusBar, QStyle, QTabBar, QToolButton, QTreeView, QVBoxLayout, QWidget,
+    QApplication, QDialog, QDialogButtonBox, QDockWidget, QFileIconProvider,
+    QFileSystemModel, QFormLayout, QFrame, QGridLayout, QHBoxLayout,
+    QInputDialog, QLabel,
+    QLineEdit, QMainWindow, QMenu, QMessageBox, QSizePolicy, QSplitter,
+    QStackedLayout, QStackedWidget, QStatusBar, QStyle, QTabBar, QToolButton,
+    QTreeView, QVBoxLayout, QWidget,
 )
 
 from app.engine.file_ops import FileOps
@@ -28,6 +30,7 @@ from app.gui.async_icons import shared_icon_provider
 from app.gui.dnd_views import FolderTreeView
 from app.gui.file_pane import FilePane
 from app.gui.favorites_sidebar import FavoritesSidebar
+from app.gui.icons import material_icon
 from app.gui.preview_dialog import QuickPreviewDialog
 from app.gui.properties_dialog import PropertiesDialog
 from app.gui.recent_sidebar import RecentSidebar
@@ -38,6 +41,45 @@ from app.models.recent import RecentStore
 from app.models.rename_presets import RenamePresetStore
 
 from app.paths import CONFIG_DIR
+
+
+# ショートカット一覧（カテゴリ → [(キー, 機能名)]）。
+# _build_actions と eventFilter（Ctrl+Tab / Space）に対応。一覧ポップアップの表示元。
+SHORTCUTS: list[tuple[str, list[tuple[str, str]]]] = [
+    ("ファイル操作", [
+        ("Ctrl+C", "コピー"),
+        ("Ctrl+X", "切り取り"),
+        ("Ctrl+V", "貼り付け"),
+        ("Ctrl+Shift+C", "パスをコピー"),
+        ("Delete", "削除（ゴミ箱）"),
+        ("Shift+Delete", "完全削除"),
+        ("F2", "単一リネーム"),
+        ("Ctrl+H", "一括リネーム"),
+        ("Ctrl+Shift+N", "新規フォルダー"),
+        ("Ctrl+Z", "Undo"),
+    ]),
+    ("ナビゲーション", [
+        ("Alt+↑", "上へ"),
+        ("Alt+←", "戻る"),
+        ("Alt+→", "進む"),
+        ("F4", "パス入力へ"),
+        ("F5", "更新"),
+    ]),
+    ("検索・選択", [
+        ("Ctrl+F", "検索"),
+        ("F3", "フィルタへ"),
+        ("Ctrl+A", "すべて選択"),
+    ]),
+    ("タブ・ペイン・表示", [
+        ("Ctrl+T", "新規タブ"),
+        ("Ctrl+W", "タブを閉じる"),
+        ("Ctrl+Tab / Ctrl+Shift+Tab", "タブ切替"),
+        ("F9", "デュアルペイン切替"),
+        ("F6", "ペイン切替"),
+        ("Ctrl+Shift+T", "詳細／サムネイル切替"),
+        ("Space", "クイックプレビュー"),
+    ]),
+]
 
 
 def _human_size(size: float) -> str:
@@ -345,6 +387,28 @@ class MainWindow(QMainWindow):
         self.breadcrumb = BreadcrumbBar()
         self.breadcrumb.path_selected.connect(self.navigate)
         top.addWidget(self.breadcrumb, stretch=1)
+        # ショートカット一覧の左隣: 設定ボタン（歯車）
+        self.settings_btn = QToolButton()
+        self.settings_btn.setIcon(material_icon("settings", dark=self._is_dark()))
+        self.settings_btn.setToolTip("設定")
+        self.settings_btn.setAutoRaise(True)
+        self.settings_btn.clicked.connect(self._show_settings_menu)
+        top.addWidget(self.settings_btn)
+        # パンくず行の右端: ショートカット一覧ボタン（⌘）
+        self.shortcuts_btn = QToolButton()
+        self.shortcuts_btn.setIcon(
+            material_icon("keyboard_command_key", dark=self._is_dark()))
+        self.shortcuts_btn.setToolTip("ショートカット一覧")
+        self.shortcuts_btn.setAutoRaise(True)
+        self.shortcuts_btn.clicked.connect(self._show_shortcuts)
+        top.addWidget(self.shortcuts_btn)
+        # ショートカット一覧の右隣: ヘルプボタン（?）
+        self.help_btn = QToolButton()
+        self.help_btn.setIcon(material_icon("help", dark=self._is_dark()))
+        self.help_btn.setToolTip("ヘルプ")
+        self.help_btn.setAutoRaise(True)
+        self.help_btn.clicked.connect(self._show_help_menu)
+        top.addWidget(self.help_btn)
         root.addLayout(top)
 
         # 3ペイン
@@ -753,46 +817,25 @@ class MainWindow(QMainWindow):
         add("表示モード切替", "Ctrl+Shift+T", self.toggle_view_mode)
         # Space は FileTableView.preview_requested 経由（QAction だと二重発火するため）
 
-        # メニューバー：ファイル・選択・表示・設定
-        menubar = self.menuBar()
-        file_menu = menubar.addMenu("ファイル")
-        new_menu = file_menu.addMenu("新規作成")
-        new_menu.addAction("フォルダー\tCtrl+Shift+N", self.new_folder)
-        new_menu.addAction("テキストファイル", self.new_text_file)
-        file_menu.addSeparator()
-        file_menu.addAction("新規タブ\tCtrl+T", lambda: self.new_tab())
-        file_menu.addAction("タブを閉じる\tCtrl+W", self.close_current_tab)
-        file_menu.addSeparator()
-        file_menu.addAction("終了", self.close)
-        select_menu = menubar.addMenu("選択")
-        select_menu.addAction("すべて選択\tCtrl+A", self.select_all)
-        select_menu.addAction("選択を反転", self.invert_selection)
-        select_menu.addAction("パターンで選択…", self.select_by_pattern)
-        view_menu = menubar.addMenu("表示")
-        view_menu.addAction("詳細／サムネイル切替\tCtrl+Shift+T",
-                            self.toggle_view_mode)
-        view_menu.addSeparator()
-        view_menu.addAction("デュアルペイン\tF9", self.toggle_dual_pane)
-        view_menu.addAction("ペイン切替\tF6", self.toggle_active_pane)
-        view_menu.addAction("クイックプレビュー\tSpace", self.quick_preview)
-        settings_menu = menubar.addMenu("設定")
-        settings_menu.addAction("テーマ切替（ダーク／ライト）",
-                                self.toggle_theme)
-        settings_menu.addAction("初期ディレクトリを設定…",
-                                self._set_initial_directory)
-        # 右クリックは Fibro固有＋シェル拡張(7-Zip等)の統合メニュー（常時）。
-        # Win+E オーバーライド（HKCU レジストリ・トグル可）
+        # 設定はトップバーの歯車アイコン（settings_btn → _show_settings_menu）に移動。
+        # Win+E オーバーライド用の永続アクションをここで生成しておく。
         from app import winekey
-        self.winekey_action = settings_menu.addAction("標準フォルダのオーバーライド")
+        self.winekey_action = QAction("標準フォルダのオーバーライド", self)
         self.winekey_action.setCheckable(True)
         self.winekey_action.setChecked(winekey.is_enabled())
         self.winekey_action.setEnabled(winekey.is_supported())
         self.winekey_action.toggled.connect(self._toggle_winekey)
 
-        help_menu = menubar.addMenu("ヘルプ")
-        help_menu.addAction("バグを報告…", self._report_bug)
-        help_menu.addSeparator()
-        help_menu.addAction("Fibro について…", self._show_about)
+    def _show_settings_menu(self) -> None:
+        """歯車ボタン: 設定項目をポップアップメニューで表示。"""
+        menu = QMenu(self)
+        menu.addAction("テーマ切替（ダーク／ライト）", self.toggle_theme)
+        menu.addAction("初期ディレクトリを設定…", self._set_initial_directory)
+        menu.addSeparator()
+        # Win+E オーバーライド（HKCU レジストリ・トグル可）の永続アクション
+        menu.addAction(self.winekey_action)
+        pos = self.settings_btn.mapToGlobal(self.settings_btn.rect().bottomLeft())
+        menu.exec(pos)
 
     # バグ報告先（GitHub Issues）
     _ISSUES_URL = "https://github.com/tjxhq592-ship-it/release/issues"
@@ -1019,9 +1062,9 @@ class MainWindow(QMainWindow):
             return
         paths = self.selected_paths()
         gpos = self._active_view().viewport().mapToGlobal(pos)
+        from app import shell_menu
         # 選択あり: Fibro固有＋シェル拡張(7-Zip等)の統合メニューを表示。
         if paths:
-            from app import shell_menu
             if shell_menu.is_supported():
                 items, callables = self._build_combined_items(paths)
                 ok, key = shell_menu.show_combined_menu(
@@ -1030,7 +1073,21 @@ class MainWindow(QMainWindow):
                     if key and key in callables:
                         callables[key]()
                     return  # シェル項目実行/キャンセルも含めここで終了
-        # 非対応 or 失敗 or 選択なし → Fibro 自前メニュー
+        # 選択なし（空白）: Windows 本物の「新規作成」＋Fibro追加項目の統合メニュー。
+        elif shell_menu.is_supported():
+            before = self._dir_snapshot()
+            items, callables = self._build_new_menu_items()
+            ok, key = shell_menu.show_new_menu(
+                int(self.winId()), str(self.current_path),
+                gpos.x(), gpos.y(), items)
+            if ok:
+                if key == "__created__":
+                    QTimer.singleShot(
+                        0, lambda b=before: self._select_new_file(b))
+                elif key and key in callables:
+                    callables[key]()
+                return
+        # 非対応 or 失敗 → Fibro 自前メニュー（shellnew レジストリ版を含む）
         menu = self._build_fibro_menu(paths)
         if menu.actions():
             menu.exec(gpos)
@@ -1050,6 +1107,51 @@ class MainWindow(QMainWindow):
                           "label": "お気に入りに追加"})
         return items, callables
 
+    def _build_new_menu_items(self):
+        """空白右クリックの統合メニューに足す Fibro 項目（New はシェル側が出す）。
+
+        フォルダー/各ファイル型は CNewMenu が出すため Fibro 側には入れない。
+        貼り付け・お気に入りに追加・雛形のみ。戻り値 (items, key→callable)。
+        """
+        from app import clipboard_files
+        callables: dict = {}
+        items: list = []
+        if clipboard_files.has_files():
+            callables["paste"] = self.paste_clipboard
+            items.append({"type": "action", "key": "paste",
+                          "label": "貼り付け"})
+        cur = self.current_path
+        if cur:
+            callables["fav"] = lambda c=cur: self.favorites.add_favorite(c)
+            items.append({"type": "action", "key": "fav",
+                          "label": "お気に入りに追加"})
+        # config/templates/ の雛形
+        try:
+            templates = sorted(
+                p for p in self._template_dir().iterdir() if p.is_file())
+        except OSError:
+            templates = []
+        for idx, tpl in enumerate(templates):
+            key = f"tpl{idx}"
+            callables[key] = lambda t=tpl: self._new_from_template(t)
+            items.append({"type": "action", "key": key,
+                          "label": f"雛形: {tpl.name}"})
+        return items, callables
+
+    def _dir_snapshot(self) -> set:
+        """カレント直下の名前集合（作成直後の新規ファイル検出用）。"""
+        try:
+            return set(os.listdir(self.current_path))
+        except OSError:
+            return set()
+
+    def _select_new_file(self, before: set) -> None:
+        """before に無い新規エントリを選択（シェル New 作成直後のハイライト）。"""
+        after = self._dir_snapshot()
+        new = sorted(after - before)
+        if new:
+            self._select_by_name(new[0])
+
     def _build_fibro_menu(self, paths: list[str]) -> QMenu:
         """Fibro 自前の QMenu（統合メニュー非対応/失敗時・空白時のフォールバック）。"""
         from app import clipboard_files
@@ -1068,7 +1170,9 @@ class MainWindow(QMainWindow):
             menu.addAction("貼り付け\tCtrl+V", self.paste_clipboard)
         new_menu = menu.addMenu("新規作成")
         new_menu.addAction("フォルダー\tCtrl+Shift+N", self.new_folder)
-        new_menu.addAction("テキストファイル", self.new_text_file)
+        # Windows の ShellNew 登録型を展開。空（取得不可）なら従来の固定行。
+        if not self._add_shellnew_actions(new_menu):
+            new_menu.addAction("テキストファイル", self.new_text_file)
         self._add_template_actions(new_menu)
         if paths:
             menu.addSeparator()
@@ -1332,6 +1436,33 @@ class MainWindow(QMainWindow):
         # 監視中のモデルが自動反映するため全再スキャンは不要。反映後に選択。
         QTimer.singleShot(0, lambda n=target.name: self._select_by_name(n))
 
+    def _add_shellnew_actions(self, menu: QMenu) -> bool:
+        """Windows の ShellNew 登録型をメニューに展開。1件でも出せたら True。"""
+        from app import shellnew
+        items = shellnew.list_new_items()
+        if not items:
+            return False
+        provider = QFileIconProvider()
+        for item in items:
+            action = menu.addAction(
+                item["label"],
+                lambda checked=False, it=item: self._new_shellnew(it))
+            icon = provider.icon(QFileInfo(f"x{item['ext']}"))
+            if not icon.isNull():
+                action.setIcon(icon)
+        return True
+
+    def _new_shellnew(self, item: dict) -> None:
+        """ShellNew 型を Windows 風に「新しい <型名>.<拡張子>」で即作成し選択。"""
+        from app import shellnew
+        target = self._unique_path(f"新しい {item['label']}{item['ext']}")
+        try:
+            shellnew.create_item(item, str(self.current_path), target.stem)
+        except OSError as e:
+            QMessageBox.critical(self, "作成失敗", str(e))
+            return
+        QTimer.singleShot(0, lambda n=target.name: self._select_by_name(n))
+
     def _template_dir(self) -> Path:
         return CONFIG_DIR / "templates"
 
@@ -1442,6 +1573,54 @@ class MainWindow(QMainWindow):
         self._active_pane.set_root_index(
             self.proxy.mapFromSource(self.list_model.index(path)))
 
+    def _is_dark(self) -> bool:
+        """現在テーマがダークかどうか。"""
+        return self.theme_manager.theme == "dark"
+
+    def _show_help_menu(self) -> None:
+        """? ボタン: ヘルプ項目をポップアップメニューで表示。"""
+        menu = QMenu(self)
+        menu.addAction("バグを報告…", self._report_bug)
+        menu.addSeparator()
+        menu.addAction("Fibro について…", self._show_about)
+        pos = self.help_btn.mapToGlobal(self.help_btn.rect().bottomLeft())
+        menu.exec(pos)
+
+    def _show_shortcuts(self) -> None:
+        """⌘ ボタン: ショートカット一覧を参照専用ポップアップで表示。"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("ショートカット一覧")
+        # 枠（タイトルバー＋×ボタン）なし。設定／ヘルプのメニューと同様に
+        # 外側クリックで自動的に閉じる。
+        dialog.setWindowFlags(Qt.WindowType.Popup)
+        outer = QVBoxLayout(dialog)
+        outer.setContentsMargins(14, 14, 14, 14)
+        outer.setSpacing(10)
+
+        for category, items in SHORTCUTS:
+            heading = QLabel(category)
+            heading.setStyleSheet("font-weight: 600;")
+            outer.addWidget(heading)
+            grid = QGridLayout()
+            grid.setContentsMargins(8, 0, 0, 0)
+            grid.setHorizontalSpacing(18)
+            grid.setVerticalSpacing(3)
+            for row, (key, label) in enumerate(items):
+                key_label = QLabel(key)
+                key_label.setStyleSheet("color: palette(highlight);")
+                grid.addWidget(key_label, row, 0)
+                grid.addWidget(QLabel(label), row, 1)
+            grid.setColumnStretch(1, 1)
+            outer.addLayout(grid)
+
+        # ボタン直下に配置
+        btn_pos = self.shortcuts_btn.mapToGlobal(
+            self.shortcuts_btn.rect().bottomLeft())
+        dialog.adjustSize()
+        dialog.move(btn_pos.x() - dialog.width()
+                    + self.shortcuts_btn.width(), btn_pos.y() + 4)
+        dialog.show()
+
     def toggle_theme(self) -> None:
         app = QApplication.instance()
         if app:
@@ -1450,6 +1629,11 @@ class MainWindow(QMainWindow):
                 f"テーマ: {'ダーク' if theme == 'dark' else 'ライト'}", 3000)
             self.favorites.refresh()
             self.recent_sidebar.refresh()
+            self.settings_btn.setIcon(
+                material_icon("settings", dark=self._is_dark()))
+            self.shortcuts_btn.setIcon(
+                material_icon("keyboard_command_key", dark=self._is_dark()))
+            self.help_btn.setIcon(material_icon("help", dark=self._is_dark()))
 
     def rename_single(self) -> None:
         """F2: 選択中1件をその場でリネーム（RenameExecutor 経由で Undo 可）。"""
