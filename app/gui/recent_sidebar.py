@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
+from app.i18n import _
 from app.models.recent import RecentStore
 
 _PATH_ROLE = Qt.ItemDataRole.UserRole
@@ -48,8 +49,8 @@ class RecentSidebar(QWidget):
 
     def refresh(self) -> None:
         self.tree.clear()
-        self._section("最近使った", self._store.recent(10))
-        self._section("よく使う", self._store.frequent(10))
+        self._section(_("sidebar_recent"), self._store.recent(10))
+        self._section(_("sidebar_frequent"), self._store.frequent(10))
 
     def _on_clicked(self, item: QTreeWidgetItem, _col: int = 0) -> None:
         path = item.data(0, _PATH_ROLE)

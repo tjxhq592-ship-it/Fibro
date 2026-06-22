@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from app.i18n import _
 from app.models.favorite import FavoriteStore
 
 _ID_ROLE = Qt.ItemDataRole.UserRole
@@ -180,13 +181,14 @@ class FavoritesSidebar(QWidget):
         if item is None:
             return
         fav = next((f for f in self._store.favorites if f.id == fav_id), None)
+        mark = "  " + _("fav_unreachable_mark")
         base = (self._label_for(fav) if fav is not None
-                else item.text(0).replace("  (到達不可)", ""))
+                else item.text(0).replace(mark, ""))
         if ok:
             item.setText(0, base)
             item.setData(0, Qt.ItemDataRole.ForegroundRole, None)  # 既定色へ戻す
         else:
-            item.setText(0, base + "  (到達不可)")
+            item.setText(0, base + mark)
             item.setForeground(0, QColor("#9e9e9e"))
 
     def _recheck_reachability(self) -> None:
@@ -202,12 +204,13 @@ class FavoritesSidebar(QWidget):
     # ---- 追加 ----
     def add_favorite(self, path: str) -> None:
         if self._store.find_by_path(path):
-            QMessageBox.information(self, "お気に入り", "既に登録されています。")
+            QMessageBox.information(
+                self, _("sidebar_fav"), _("fav_already_msg"))
             return
         from pathlib import Path as P
         default_label = P(path).name or path
         label, ok = QInputDialog.getText(
-            self, "お気に入りに追加", "表示名:", text=default_label)
+            self, _("ctx_add_fav"), _("fav_label_display"), text=default_label)
         if not ok or not label.strip():
             return
         # 選択中のグループがあればその配下に追加
@@ -239,7 +242,8 @@ class FavoritesSidebar(QWidget):
 
     def _add_group(self, parent_id: str = "") -> None:
         label, ok = QInputDialog.getText(
-            self, "新規グループ", "グループ名:", text="新しいグループ")
+            self, _("fav_group_new_title"), _("fav_group_name_lbl"),
+            text=_("fav_group_new_default"))
         if ok and label.strip():
             self._store.add_group(label.strip(), parent_id=parent_id)
             self.refresh()
@@ -293,9 +297,8 @@ class FavoritesSidebar(QWidget):
             return
         if not fav.is_reachable():
             QMessageBox.warning(
-                self, "到達不可",
-                f"パスにアクセスできません:\n{fav.path}\n\n"
-                "ネットワークドライブの接続や共有設定を確認してください。")
+                self, _("fav_unreachable_title"),
+                _("fav_unreachable_msg").format(path=fav.path))
             self.refresh()
             return
         self.path_selected.emit(fav.path)
@@ -305,31 +308,31 @@ class FavoritesSidebar(QWidget):
         menu = QMenu(self)
         if item is None:
             # 空白部分: トップ階層に新規グループ
-            menu.addAction("新規グループ…", lambda: self._add_group(""))
+            menu.addAction(_("fav_ctx_new_group"), lambda: self._add_group(""))
             menu.exec(self.tree.viewport().mapToGlobal(pos))
             return
         fav = self._fav_for_item(item)
         if not fav:
             return
         if fav.is_group:
-            menu.addAction("このグループ内に新規グループ…",
+            menu.addAction(_("fav_ctx_new_subgroup"),
                            lambda: self._add_group(fav.id))
-            menu.addAction("名前を変更…", lambda: self._rename(fav))
+            menu.addAction(_("fav_ctx_rename"), lambda: self._rename(fav))
             menu.addSeparator()
-            menu.addAction("削除（中身ごと）", lambda: self._remove(fav))
+            menu.addAction(_("fav_ctx_remove_group"), lambda: self._remove(fav))
         else:
-            menu.addAction("開く", lambda: self._on_clicked(item))
-            menu.addAction("名前を変更…", lambda: self._rename(fav))
-            menu.addAction("メモを編集…", lambda: self._edit_note(fav))
+            menu.addAction(_("ctx_open"), lambda: self._on_clicked(item))
+            menu.addAction(_("fav_ctx_rename"), lambda: self._rename(fav))
+            menu.addAction(_("fav_ctx_edit_note"), lambda: self._edit_note(fav))
             menu.addSeparator()
-            menu.addAction("削除", lambda: self._remove(fav))
+            menu.addAction(_("fav_ctx_remove"), lambda: self._remove(fav))
         menu.addSeparator()
-        menu.addAction("新規グループ…", lambda: self._add_group(""))
+        menu.addAction(_("fav_ctx_new_group"), lambda: self._add_group(""))
         menu.exec(self.tree.viewport().mapToGlobal(pos))
 
     def _rename(self, fav) -> None:
         label, ok = QInputDialog.getText(
-            self, "名前を変更", "表示名:", text=fav.label)
+            self, _("fav_rename_title"), _("fav_label_display"), text=fav.label)
         if ok and label.strip():
             fav.label = label.strip()
             self._store.save()
@@ -337,7 +340,7 @@ class FavoritesSidebar(QWidget):
 
     def _edit_note(self, fav) -> None:
         note, ok = QInputDialog.getText(
-            self, "メモを編集", "メモ:", text=fav.note)
+            self, _("fav_note_title"), _("fav_note_label"), text=fav.note)
         if ok:
             fav.note = note
             self._store.save()

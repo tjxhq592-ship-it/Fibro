@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from app.engine.file_ops import FileOps
 from app.engine.rename_history import RenameExecutor
+from app.i18n import _
 from app.gui.async_icons import shared_icon_provider
 from app.gui.dnd_views import FolderTreeView
 from app.gui.file_pane import FilePane
@@ -43,41 +44,42 @@ from app.models.rename_presets import RenamePresetStore
 from app.paths import CONFIG_DIR
 
 
-# ショートカット一覧（カテゴリ → [(キー, 機能名)]）。
+# ショートカット一覧（カテゴリキー → [(キー, 機能名キー)]）。
 # _build_actions と eventFilter（Ctrl+Tab / Space）に対応。一覧ポップアップの表示元。
+# 文字列は i18n キーで保持し、表示時に _() で解決する（モジュール読込は言語適用前のため）。
 SHORTCUTS: list[tuple[str, list[tuple[str, str]]]] = [
-    ("ファイル操作", [
-        ("Ctrl+C", "コピー"),
-        ("Ctrl+X", "切り取り"),
-        ("Ctrl+V", "貼り付け"),
-        ("Ctrl+Shift+C", "パスをコピー"),
-        ("Delete", "削除（ゴミ箱）"),
-        ("Shift+Delete", "完全削除"),
-        ("F2", "単一リネーム"),
-        ("Ctrl+H", "一括リネーム"),
-        ("Ctrl+Shift+N", "新規フォルダー"),
-        ("Ctrl+Z", "Undo"),
+    ("sc_cat_file", [
+        ("Ctrl+C", "sc_copy"),
+        ("Ctrl+X", "sc_cut"),
+        ("Ctrl+V", "sc_paste"),
+        ("Ctrl+Shift+C", "sc_copy_path"),
+        ("Delete", "sc_trash"),
+        ("Shift+Delete", "sc_delete"),
+        ("F2", "sc_rename"),
+        ("Ctrl+H", "sc_batch_rename"),
+        ("Ctrl+Shift+N", "sc_new_folder"),
+        ("Ctrl+Z", "sc_undo"),
     ]),
-    ("ナビゲーション", [
-        ("Alt+↑", "上へ"),
-        ("Alt+←", "戻る"),
-        ("Alt+→", "進む"),
-        ("F4", "パス入力へ"),
-        ("F5", "更新"),
+    ("sc_cat_nav", [
+        ("Alt+↑", "sc_up"),
+        ("Alt+←", "sc_back"),
+        ("Alt+→", "sc_forward"),
+        ("F4", "sc_path_input"),
+        ("F5", "sc_refresh"),
     ]),
-    ("検索・選択", [
-        ("Ctrl+F", "検索"),
-        ("F3", "フィルタへ"),
-        ("Ctrl+A", "すべて選択"),
+    ("sc_cat_search", [
+        ("Ctrl+F", "sc_search"),
+        ("F3", "sc_filter"),
+        ("Ctrl+A", "sc_select_all"),
     ]),
-    ("タブ・ペイン・表示", [
-        ("Ctrl+T", "新規タブ"),
-        ("Ctrl+W", "タブを閉じる"),
-        ("Ctrl+Tab / Ctrl+Shift+Tab", "タブ切替"),
-        ("F9", "デュアルペイン切替"),
-        ("F6", "ペイン切替"),
-        ("Ctrl+Shift+T", "詳細／サムネイル切替"),
-        ("Space", "クイックプレビュー"),
+    ("sc_cat_view", [
+        ("Ctrl+T", "sc_new_tab"),
+        ("Ctrl+W", "sc_close_tab"),
+        ("Ctrl+Tab / Ctrl+Shift+Tab", "sc_switch_tab"),
+        ("F9", "sc_dual_pane"),
+        ("F6", "sc_switch_pane"),
+        ("Ctrl+Shift+T", "sc_toggle_view"),
+        ("Space", "sc_quick_preview"),
     ]),
 ]
 
@@ -100,17 +102,17 @@ class SingleRenameDialog(QDialog):
 
     def __init__(self, old_name: str, is_dir: bool, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("名前の変更")
+        self.setWindowTitle(_("rename_title"))
         stem, ext = self._split(old_name, is_dir)
 
         self.name_edit = QLineEdit(stem)
         self.ext_edit = QLineEdit(ext)
 
         form = QFormLayout()
-        form.addRow("名前:", self.name_edit)
+        form.addRow(_("rename_name_label"), self.name_edit)
         # フォルダは拡張子の概念がないため欄を出さない
         if not is_dir:
-            form.addRow("拡張子:", self.ext_edit)
+            form.addRow(_("rename_ext_label"), self.ext_edit)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
@@ -287,7 +289,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Fibro — ファイルブラウザー")
+        self.setWindowTitle(_("app_title"))
         self.resize(1100, 700)
         self._sel_gen = 0            # 選択世代（古い計算結果を破棄）
         self._sel_count = 0          # 直近の選択件数
@@ -390,7 +392,7 @@ class MainWindow(QMainWindow):
         # ショートカット一覧の左隣: 設定ボタン（歯車）
         self.settings_btn = QToolButton()
         self.settings_btn.setIcon(material_icon("settings", dark=self._is_dark()))
-        self.settings_btn.setToolTip("設定")
+        self.settings_btn.setToolTip(_("tip_settings"))
         self.settings_btn.setAutoRaise(True)
         self.settings_btn.clicked.connect(self._show_settings_menu)
         top.addWidget(self.settings_btn)
@@ -398,14 +400,14 @@ class MainWindow(QMainWindow):
         self.shortcuts_btn = QToolButton()
         self.shortcuts_btn.setIcon(
             material_icon("keyboard_command_key", dark=self._is_dark()))
-        self.shortcuts_btn.setToolTip("ショートカット一覧")
+        self.shortcuts_btn.setToolTip(_("tip_shortcuts"))
         self.shortcuts_btn.setAutoRaise(True)
         self.shortcuts_btn.clicked.connect(self._show_shortcuts)
         top.addWidget(self.shortcuts_btn)
         # ショートカット一覧の右隣: ヘルプボタン（?）
         self.help_btn = QToolButton()
         self.help_btn.setIcon(material_icon("help", dark=self._is_dark()))
-        self.help_btn.setToolTip("ヘルプ")
+        self.help_btn.setToolTip(_("tip_help"))
         self.help_btn.setAutoRaise(True)
         self.help_btn.clicked.connect(self._show_help_menu)
         top.addWidget(self.help_btn)
@@ -443,7 +445,7 @@ class MainWindow(QMainWindow):
         self.new_tab_btn = QToolButton()
         self.new_tab_btn.setText("＋")
         self.new_tab_btn.setAutoRaise(True)
-        self.new_tab_btn.setToolTip("新しいタブ (Ctrl+T)")
+        self.new_tab_btn.setToolTip(_("new_tab_tooltip"))
         self.new_tab_btn.clicked.connect(lambda: self.new_tab())
         tab_row = QHBoxLayout()
         tab_row.setContentsMargins(0, 0, 0, 0)
@@ -463,7 +465,7 @@ class MainWindow(QMainWindow):
 
         # フィルタボックス（タブ行の下）
         self.filter_edit = QLineEdit()
-        self.filter_edit.setPlaceholderText("カレントフォルダ内を絞り込み…")
+        self.filter_edit.setPlaceholderText(_("filter_placeholder"))
         self.filter_edit.setClearButtonEnabled(True)
         self._filter_debounce = QTimer(self, singleShot=True, interval=200)
         self._filter_debounce.timeout.connect(self._apply_filter)
@@ -485,9 +487,9 @@ class MainWindow(QMainWindow):
         self.recent_sidebar = RecentSidebar(self.recent_store)
         self.recent_sidebar.path_selected.connect(self.navigate)
         from app.gui.collapsible import CollapsibleSection
-        self.fav_section = CollapsibleSection("お気に入り", self.favorites)
-        self.recent_section = CollapsibleSection("履歴", self.recent_sidebar)
-        self.tree_section = CollapsibleSection("フォルダツリー", self.tree)
+        self.fav_section = CollapsibleSection(_("sidebar_fav"), self.favorites)
+        self.recent_section = CollapsibleSection(_("sidebar_history"), self.recent_sidebar)
+        self.tree_section = CollapsibleSection(_("sidebar_tree"), self.tree)
         left = QSplitter(Qt.Orientation.Vertical)
         left.setHandleWidth(1)
         left.addWidget(self.fav_section)
@@ -533,7 +535,7 @@ class MainWindow(QMainWindow):
 
         # 下部: ステータス（選択情報 + ドライブ空き容量）
         bottom = QHBoxLayout()
-        self.selection_label = QLabel("選択: 0件")
+        self.selection_label = QLabel(_("sel_0"))
         self.selection_label.setObjectName("statusLabel")
         self.disk_label = QLabel("")
         self.disk_label.setObjectName("statusLabel")
@@ -579,7 +581,7 @@ class MainWindow(QMainWindow):
         if str(Path(path)) != pane.current_path:
             return
         count = pane.list_model.rowCount(pane.list_model.index(path))
-        self.statusBar().showMessage(f"{count:,} 項目", 4000)
+        self.statusBar().showMessage(_("items_n").format(n=count), 4000)
 
     def _default_dir(self) -> str:
         initial = self.theme_manager.get("initial_dir", str(Path.home()))
@@ -700,7 +702,7 @@ class MainWindow(QMainWindow):
         btn.setText("✕")
         btn.setAutoRaise(True)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.setToolTip("タブを閉じる")
+        btn.setToolTip(_("tab_close_tooltip"))
         btn.clicked.connect(lambda: self._close_tab_for_button(btn))
         self.tab_bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, btn)
 
@@ -768,7 +770,8 @@ class MainWindow(QMainWindow):
             pane.set_view_mode(new_mode)
         self.theme_manager.set("view_mode", new_mode)
         self.statusBar().showMessage(
-            f"表示: {'サムネイル' if new_mode == 'thumbnails' else '詳細'}", 3000)
+            _("view_mode_thumb" if new_mode == "thumbnails" else "view_mode_detail"),
+            3000)
 
     def _restore_tabs(self) -> None:
         saved = self.theme_manager.get("tabs", [])
@@ -820,7 +823,7 @@ class MainWindow(QMainWindow):
         # 設定はトップバーの歯車アイコン（settings_btn → _show_settings_menu）に移動。
         # Win+E オーバーライド用の永続アクションをここで生成しておく。
         from app import winekey
-        self.winekey_action = QAction("標準フォルダのオーバーライド", self)
+        self.winekey_action = QAction(_("menu_override_wine"), self)
         self.winekey_action.setCheckable(True)
         self.winekey_action.setChecked(winekey.is_enabled())
         self.winekey_action.setEnabled(winekey.is_supported())
@@ -829,13 +832,22 @@ class MainWindow(QMainWindow):
     def _show_settings_menu(self) -> None:
         """歯車ボタン: 設定項目をポップアップメニューで表示。"""
         menu = QMenu(self)
-        menu.addAction("テーマ切替（ダーク／ライト）", self.toggle_theme)
-        menu.addAction("初期ディレクトリを設定…", self._set_initial_directory)
+        menu.addAction(_("menu_toggle_theme"), self.toggle_theme)
+        menu.addAction(_("menu_set_initial"), self._set_initial_directory)
+        # 言語切り替えサブメニュー（保存→次回起動時に反映）
+        lang_menu = menu.addMenu(_("menu_language"))
+        lang_menu.addAction(_("menu_lang_ja"), lambda: self._set_language("ja"))
+        lang_menu.addAction(_("menu_lang_en"), lambda: self._set_language("en"))
         menu.addSeparator()
         # Win+E オーバーライド（HKCU レジストリ・トグル可）の永続アクション
         menu.addAction(self.winekey_action)
         pos = self.settings_btn.mapToGlobal(self.settings_btn.rect().bottomLeft())
         menu.exec(pos)
+
+    def _set_language(self, lang: str) -> None:
+        """言語を設定に保存。即時反映はせず次回起動時に適用する。"""
+        self.theme_manager.set("language", lang)
+        self.statusBar().showMessage(_("lang_restart"), 5000)
 
     # バグ報告先（GitHub Issues）
     _ISSUES_URL = "https://github.com/tjxhq592-ship-it/release/issues"
@@ -852,13 +864,13 @@ class MainWindow(QMainWindow):
         from PySide6 import __version__ as pyside_version
         from app import __version__ as app_version
         QMessageBox.about(
-            self, "Fibro について",
-            f"<b>Fibro — ファイルブラウザー</b><br>"
-            f"バージョン {app_version}<br><br>"
-            f"Python {platform.python_version()}・"
-            f"PySide6 {pyside_version}<br>"
-            f"{platform.system()} {platform.release()}<br><br>"
-            f"バグ報告: <a href='{self._ISSUES_URL}'>{self._ISSUES_URL}</a>")
+            self, _("dlg_about_title"),
+            _("dlg_about_body").format(
+                ver=app_version,
+                py=platform.python_version(),
+                pyside=pyside_version,
+                sys=f"{platform.system()} {platform.release()}",
+                url=self._ISSUES_URL))
 
     def _toggle_winekey(self, checked: bool) -> None:
         """Win+E オーバーライドの ON/OFF（レジストリ書換）。"""
@@ -868,20 +880,16 @@ class MainWindow(QMainWindow):
             if not exe:
                 from PySide6.QtWidgets import QMessageBox
                 QMessageBox.information(
-                    self, "Win+E オーバーライド",
-                    "この機能はインストール版／exe 版（Fibro.exe）でのみ有効です。\n"
-                    "ソースから実行中は利用できません。")
+                    self, _("dlg_wine_title"), _("dlg_wine_exe_only"))
                 self.winekey_action.blockSignals(True)
                 self.winekey_action.setChecked(False)
                 self.winekey_action.blockSignals(False)
                 return
             ok = winekey.enable(exe)
-            msg = ("Win+E を Fibro に割り当てました" if ok
-                   else "設定に失敗しました（権限などをご確認ください）")
+            msg = _("win_e_on" if ok else "win_e_fail_on")
         else:
             ok = winekey.disable()
-            msg = ("Win+E を標準エクスプローラーに戻しました" if ok
-                   else "解除に失敗しました")
+            msg = _("win_e_off" if ok else "win_e_fail_off")
         if not ok:
             # 実状態へチェックを戻す（再帰しないようシグナル抑止）
             self.winekey_action.blockSignals(True)
@@ -893,13 +901,13 @@ class MainWindow(QMainWindow):
         """初期ディレクトリをユーザーが選択して保存。"""
         from PySide6.QtWidgets import QFileDialog
         path = QFileDialog.getExistingDirectory(
-            self, "初期ディレクトリを選択",
+            self, _("dlg_initial_dir_title"),
             self.theme_manager.get("initial_dir", "C:\\"))
         if path:
             self.theme_manager.set("initial_dir", path)
             self.navigate(path)
             self.statusBar().showMessage(
-                f"初期ディレクトリを設定しました", 3000)
+                _("initial_dir_set").format(path=path), 3000)
 
     def _apply_filter(self) -> None:
         text = self.filter_edit.text().strip()
@@ -955,8 +963,8 @@ class MainWindow(QMainWindow):
             return
         free, total = usage
         drive = os.path.splitdrive(str(Path(path)))[0] or str(Path(path).anchor)
-        self.disk_label.setText(
-            f"{drive} 空き {_human_size(free)} / {_human_size(total)}")
+        self.disk_label.setText(_("drive_free").format(
+            drive=drive, free=_human_size(free), total=_human_size(total)))
 
     def _on_search_file_selected(self, file_path: str) -> None:
         """検索結果でファイルを選択。親フォルダへ navigate してから select。"""
@@ -1017,8 +1025,8 @@ class MainWindow(QMainWindow):
 
     def _on_open_failed(self, path: str, err: str) -> None:
         QMessageBox.warning(
-            self, "開けません",
-            f"ファイルを開けませんでした:\n{path}\n\n{err}")
+            self, _("dlg_open_fail"),
+            _("dlg_open_fail_msg").format(path=path, err=err))
 
     # ---- 選択 ----
     def selected_paths(self) -> list[str]:
@@ -1033,7 +1041,7 @@ class MainWindow(QMainWindow):
         paths = self.selected_paths()
         self._sel_count = len(paths)
         self._sel_gen += 1
-        self.selection_label.setText(f"選択: {self._sel_count}件")
+        self.selection_label.setText(_("sel_n").format(n=self._sel_count))
         if not paths:
             return
         gen = self._sel_gen
@@ -1045,9 +1053,11 @@ class MainWindow(QMainWindow):
         """非同期で求めた選択サイズ合計を反映（最新の選択のみ）。"""
         if gen != self._sel_gen:
             return  # 既に選択が変わっている → 破棄
-        text = f"選択: {self._sel_count}件"
         if total:
-            text += f" / {_human_size(total)}"
+            text = _("sel_n_size").format(
+                n=self._sel_count, size=_human_size(total))
+        else:
+            text = _("sel_n").format(n=self._sel_count)
         self.selection_label.setText(text)
 
     # ---- コンテキストメニュー ----
@@ -1104,7 +1114,7 @@ class MainWindow(QMainWindow):
         if fav_target:
             callables["fav"] = lambda: self.favorites.add_favorite(fav_target)
             items.append({"type": "action", "key": "fav",
-                          "label": "お気に入りに追加"})
+                          "label": _("ctx_add_fav")})
         return items, callables
 
     def _build_new_menu_items(self):
@@ -1119,12 +1129,12 @@ class MainWindow(QMainWindow):
         if clipboard_files.has_files():
             callables["paste"] = self.paste_clipboard
             items.append({"type": "action", "key": "paste",
-                          "label": "貼り付け"})
+                          "label": _("ctx_paste")})
         cur = self.current_path
         if cur:
             callables["fav"] = lambda c=cur: self.favorites.add_favorite(c)
             items.append({"type": "action", "key": "fav",
-                          "label": "お気に入りに追加"})
+                          "label": _("ctx_add_fav")})
         # config/templates/ の雛形
         try:
             templates = sorted(
@@ -1135,7 +1145,7 @@ class MainWindow(QMainWindow):
             key = f"tpl{idx}"
             callables[key] = lambda t=tpl: self._new_from_template(t)
             items.append({"type": "action", "key": key,
-                          "label": f"雛形: {tpl.name}"})
+                          "label": _("tpl_label").format(name=tpl.name)})
         return items, callables
 
     def _dir_snapshot(self) -> set:
@@ -1157,30 +1167,30 @@ class MainWindow(QMainWindow):
         from app import clipboard_files
         menu = QMenu(self)
         if paths:
-            menu.addAction("開く", lambda: self._open_paths(paths))
+            menu.addAction(_("ctx_open"), lambda: self._open_paths(paths))
             self._add_open_with_menu(menu, paths)
             menu.addSeparator()
             if len(paths) == 1:
-                menu.addAction("名前の変更\tF2", self.rename_single)
-            menu.addAction("一括リネーム…\tCtrl+H", self.open_rename_dialog)
+                menu.addAction(_("ctx_rename"), self.rename_single)
+            menu.addAction(_("ctx_batch_rename"), self.open_rename_dialog)
             menu.addSeparator()
-            menu.addAction("コピー\tCtrl+C", lambda: self._set_clipboard("copy"))
-            menu.addAction("切り取り\tCtrl+X", lambda: self._set_clipboard("cut"))
+            menu.addAction(_("ctx_copy"), lambda: self._set_clipboard("copy"))
+            menu.addAction(_("ctx_cut"), lambda: self._set_clipboard("cut"))
         if clipboard_files.has_files():
-            menu.addAction("貼り付け\tCtrl+V", self.paste_clipboard)
-        new_menu = menu.addMenu("新規作成")
-        new_menu.addAction("フォルダー\tCtrl+Shift+N", self.new_folder)
+            menu.addAction(_("ctx_paste"), self.paste_clipboard)
+        new_menu = menu.addMenu(_("ctx_new"))
+        new_menu.addAction(_("menu_new_folder"), self.new_folder)
         # Windows の ShellNew 登録型を展開。空（取得不可）なら従来の固定行。
         if not self._add_shellnew_actions(new_menu):
-            new_menu.addAction("テキストファイル", self.new_text_file)
+            new_menu.addAction(_("menu_new_text"), self.new_text_file)
         self._add_template_actions(new_menu)
         if paths:
             menu.addSeparator()
-            menu.addAction("パスをコピー\tCtrl+Shift+C",
+            menu.addAction(_("ctx_copy_path"),
                            lambda: self._copy_paths_to_clipboard(paths))
             menu.addSeparator()
-            menu.addAction("削除（ゴミ箱へ）\tDelete", self.delete_selected)
-            menu.addAction("完全に削除\tShift+Delete",
+            menu.addAction(_("ctx_trash"), self.delete_selected)
+            menu.addAction(_("ctx_delete"),
                            self.delete_selected_permanent)
             menu.addSeparator()
             dirs = [p for p in paths if Path(p).is_dir()]
@@ -1188,10 +1198,10 @@ class MainWindow(QMainWindow):
         else:
             fav_target = self.current_path
         if fav_target:
-            menu.addAction("お気に入りに追加",
+            menu.addAction(_("ctx_add_fav"),
                            lambda: self.favorites.add_favorite(fav_target))
         if paths:
-            menu.addAction("プロパティ", self.show_properties)
+            menu.addAction(_("ctx_properties"), self.show_properties)
         return menu
 
     def _show_shell_menu(self, paths: list[str], gpos) -> bool:
@@ -1200,8 +1210,7 @@ class MainWindow(QMainWindow):
         ok = shell_menu.show_shell_context_menu(
             int(self.winId()), paths, gpos.x(), gpos.y())
         if not ok:
-            self.statusBar().showMessage(
-                "Windowsメニューを表示できませんでした", 3000)
+            self.statusBar().showMessage(_("shell_menu_fail"), 3000)
         return ok
 
     def _active_view(self):
@@ -1214,14 +1223,14 @@ class MainWindow(QMainWindow):
         dirs = [p for p in paths if Path(p).is_dir()]
         # フォルダ選択時はそのフォルダ、ファイル選択時は親フォルダを対象に
         target = dirs[0] if dirs else str(Path(paths[0]).parent)
-        sub = menu.addMenu("ここで開く")
-        sub.addAction("ターミナル",
+        sub = menu.addMenu(_("ctx_open_with"))
+        sub.addAction(_("ctx_terminal"),
                       lambda: self._open_terminal(target))
         sub.addAction("PowerShell",
                       lambda: self._open_in(["powershell.exe"], target))
         sub.addAction("VS Code",
                       lambda: self._open_in(["code"], target, shell=True))
-        sub.addAction("エクスプローラー",
+        sub.addAction(_("ctx_explorer"),
                       lambda: self._open_in(["explorer.exe"], target))
 
     def _open_terminal(self, directory: str) -> None:
@@ -1232,7 +1241,8 @@ class MainWindow(QMainWindow):
             try:
                 subprocess.Popen(["cmd.exe"], cwd=directory)  # noqa: S603,S607
             except OSError as e:
-                QMessageBox.warning(self, "ターミナル", f"起動できませんでした:\n{e}")
+                QMessageBox.warning(self, _("dlg_terminal_fail"),
+                                    _("dlg_terminal_fail_msg").format(err=e))
 
     def _open_in(self, cmd: list[str], directory: str, shell: bool = False) -> None:
         try:
@@ -1241,14 +1251,15 @@ class MainWindow(QMainWindow):
             else:
                 subprocess.Popen([*cmd, directory], cwd=directory, shell=shell)  # noqa: S603
         except OSError as e:
-            QMessageBox.warning(self, "開く", f"起動できませんでした:\n{e}")
+            QMessageBox.warning(self, _("dlg_open_app_fail"),
+                                _("dlg_terminal_fail_msg").format(err=e))
 
     def _copy_paths_to_clipboard(self, paths: list[str]) -> None:
         clip = QApplication.clipboard()
         if clip:
             clip.setText("\n".join(paths))
             self.statusBar().showMessage(
-                f"{len(paths)}件のパスをコピーしました", 3000)
+                _("copied_n").format(n=len(paths)), 3000)
 
     def _open_selected(self) -> None:
         """Enter キー: 選択中の項目を開く/実行（ダブルクリックと同等）。"""
@@ -1271,8 +1282,9 @@ class MainWindow(QMainWindow):
             from app import clipboard_files
             clipboard_files.set_files(paths, move=(mode == "cut"))
             self._clipboard = (mode, paths)  # 後方互換（内部参照用）
+            verb = _("clip_copied" if mode == "copy" else "clip_cut")
             self.statusBar().showMessage(
-                f"{len(paths)}件を{'コピー' if mode == 'copy' else '切り取り'}しました", 3000)
+                _("clipped_n").format(n=len(paths), verb=verb), 3000)
 
     def paste_clipboard(self) -> None:
         # システムクリップボードから読む（エクスプローラーでコピーした物も貼れる）
@@ -1291,9 +1303,9 @@ class MainWindow(QMainWindow):
             else:
                 self.file_ops.copy(paths, self.current_path, resolver=resolver)
         except OSError as e:
-            QMessageBox.critical(self, "貼り付け失敗", str(e))
+            QMessageBox.critical(self, _("dlg_paste_fail"), str(e))
             return
-        self.statusBar().showMessage(f"{len(paths)}件を貼り付けました", 3000)
+        self.statusBar().showMessage(_("pasted_n").format(n=len(paths)), 3000)
 
     def _on_files_dropped(self, paths: list, dest: str, copy: bool) -> None:
         """D&D: 既定は移動、Ctrl押下でコピー。どちらも Undo 可。"""
@@ -1315,12 +1327,12 @@ class MainWindow(QMainWindow):
             else:
                 self.file_ops.move(paths, dest, resolver=resolver)
         except OSError as e:
-            QMessageBox.critical(self, "ドロップ失敗", str(e))
+            QMessageBox.critical(self, _("dlg_drop_fail"), str(e))
             return
-        verb = "コピー" if copy else "移動"
+        verb = _("kind_copy" if copy else "kind_move")
         self.statusBar().showMessage(
-            f"{len(paths)}件を {Path(dest).name or dest} へ{verb}しました"
-            "（Ctrl+Zで取り消し）", 5000)
+            _("moved_n").format(
+                n=len(paths), dest=Path(dest).name or dest, verb=verb), 5000)
 
     def _on_native_drop(self, paths: list, dest: str, gx: int, gy: int) -> None:
         """右ドラッグ: Windows ネイティブの「ここに解凍/コピー/移動…」を表示。
@@ -1335,12 +1347,12 @@ class MainWindow(QMainWindow):
         from PySide6.QtCore import QPoint
         menu = QMenu(self)
         name = Path(dest).name or dest
-        menu.addAction(f"ここにコピー（{name}）",
+        menu.addAction(_("ctx_here_copy").format(name=name),
                        lambda: self._on_files_dropped(paths, dest, True))
-        menu.addAction(f"ここに移動（{name}）",
+        menu.addAction(_("ctx_here_move").format(name=name),
                        lambda: self._on_files_dropped(paths, dest, False))
         menu.addSeparator()
-        menu.addAction("キャンセル")
+        menu.addAction(_("ctx_cancel"))
         menu.exec(QPoint(gx, gy))
 
     def delete_selected(self) -> None:
@@ -1351,15 +1363,16 @@ class MainWindow(QMainWindow):
         if len(paths) > 10:
             names += f"\n… 他{len(paths) - 10}件"
         answer = QMessageBox.question(
-            self, "削除の確認",
-            f"次の{len(paths)}件をゴミ箱に移動しますか?\n\n{names}")
+            self, _("dlg_trash_title"),
+            _("dlg_trash_msg").format(n=len(paths), names=names))
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
             self.file_ops.delete(paths)
-            self.statusBar().showMessage(f"{len(paths)}件をゴミ箱に移動しました", 3000)
+            self.statusBar().showMessage(
+                _("trashed_n").format(n=len(paths)), 3000)
         except OSError as e:
-            QMessageBox.critical(self, "削除失敗", str(e))
+            QMessageBox.critical(self, _("dlg_trash_fail"), str(e))
 
     def delete_selected_permanent(self) -> None:
         """Shift+Delete: ゴミ箱を経由せず完全削除（元に戻せない）。"""
@@ -1370,18 +1383,17 @@ class MainWindow(QMainWindow):
         if len(paths) > 10:
             names += f"\n… 他{len(paths) - 10}件"
         answer = QMessageBox.warning(
-            self, "完全に削除",
-            f"次の{len(paths)}件を完全に削除します。\n"
-            f"この操作は元に戻せません（ゴミ箱に入りません）。\n\n{names}",
+            self, _("dlg_delete_title"),
+            _("dlg_delete_msg").format(n=len(paths), names=names),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No)
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
             n = self.file_ops.delete_permanent(paths)
-            self.statusBar().showMessage(f"{n}件を完全に削除しました", 3000)
+            self.statusBar().showMessage(_("deleted_n").format(n=n), 3000)
         except OSError as e:
-            QMessageBox.critical(self, "削除失敗", str(e))
+            QMessageBox.critical(self, _("dlg_delete_fail"), str(e))
 
     def show_properties(self) -> None:
         paths = self.selected_paths()
@@ -1404,7 +1416,8 @@ class MainWindow(QMainWindow):
 
     def new_folder(self) -> None:
         name, ok = QInputDialog.getText(
-            self, "新規フォルダー", "フォルダー名:", text="新しいフォルダー")
+            self, _("dlg_new_folder_title"), _("dlg_new_folder_label"),
+            text=_("dlg_new_folder_default"))
         name = name.strip()
         if not ok or not name:
             return
@@ -1412,7 +1425,7 @@ class MainWindow(QMainWindow):
         try:
             target.mkdir()
         except OSError as e:
-            QMessageBox.critical(self, "作成失敗", str(e))
+            QMessageBox.critical(self, _("dlg_create_fail"), str(e))
             return
         # QFileSystemModel はカレントを監視しており作成は自動で一覧へ反映される。
         # 重い全再スキャン（refresh の setRootPath 往復）は避け、反映後に選択する。
@@ -1420,7 +1433,8 @@ class MainWindow(QMainWindow):
 
     def new_text_file(self) -> None:
         name, ok = QInputDialog.getText(
-            self, "新規テキストファイル", "ファイル名:", text="新しいテキスト.txt")
+            self, _("dlg_new_text_title"), _("dlg_new_text_label"),
+            text=_("dlg_new_text_default"))
         name = name.strip()
         if not ok or not name:
             return
@@ -1431,7 +1445,7 @@ class MainWindow(QMainWindow):
         try:
             target.write_text(content, encoding="utf-8")
         except OSError as e:
-            QMessageBox.critical(self, "作成失敗", str(e))
+            QMessageBox.critical(self, _("dlg_create_fail"), str(e))
             return
         # 監視中のモデルが自動反映するため全再スキャンは不要。反映後に選択。
         QTimer.singleShot(0, lambda n=target.name: self._select_by_name(n))
@@ -1459,7 +1473,7 @@ class MainWindow(QMainWindow):
         try:
             shellnew.create_item(item, str(self.current_path), target.stem)
         except OSError as e:
-            QMessageBox.critical(self, "作成失敗", str(e))
+            QMessageBox.critical(self, _("dlg_create_fail"), str(e))
             return
         QTimer.singleShot(0, lambda n=target.name: self._select_by_name(n))
 
@@ -1478,12 +1492,13 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         for tpl in templates:
             menu.addAction(
-                f"雛形: {tpl.name}",
+                _("tpl_label").format(name=tpl.name),
                 lambda checked=False, t=tpl: self._new_from_template(t))
 
     def _new_from_template(self, template: Path) -> None:
         name, ok = QInputDialog.getText(
-            self, "雛形から新規作成", "ファイル名:", text=template.name)
+            self, _("dlg_new_tpl_title"), _("dlg_new_tpl_label"),
+            text=template.name)
         name = name.strip()
         if not ok or not name:
             return
@@ -1527,7 +1542,7 @@ class MainWindow(QMainWindow):
         """ワイルドカード（例 *.png）でカレント直下を一括選択。"""
         import fnmatch
         pattern, ok = QInputDialog.getText(
-            self, "パターンで選択", "ワイルドカード（例: *.png）:", text="*.*")
+            self, _("dlg_pattern_title"), _("dlg_pattern_label"), text="*.*")
         pattern = pattern.strip()
         if not ok or not pattern:
             return
@@ -1545,7 +1560,7 @@ class MainWindow(QMainWindow):
                     idx, QItemSelectionModel.SelectionFlag.Select
                     | QItemSelectionModel.SelectionFlag.Rows)
                 matched += 1
-        self.statusBar().showMessage(f"{matched}件を選択しました", 3000)
+        self.statusBar().showMessage(_("selected_n").format(n=matched), 3000)
 
     def _copy_selected_paths(self) -> None:
         """Ctrl+Shift+C: 選択中のフルパスをクリップボードへ。"""
@@ -1558,11 +1573,11 @@ class MainWindow(QMainWindow):
         """初期ディレクトリをユーザーが選択して保存。"""
         from PySide6.QtWidgets import QFileDialog
         path = QFileDialog.getExistingDirectory(
-            self, "初期ディレクトリを選択", self.theme_manager.get("initial_dir", "C:\\"))
+            self, _("dlg_initial_dir_title"), self.theme_manager.get("initial_dir", "C:\\"))
         if path:
             self.theme_manager.set("initial_dir", path)
             self.navigate(path)
-            self.statusBar().showMessage(f"初期ディレクトリを {path} に設定しました", 3000)
+            self.statusBar().showMessage(_("initial_dir_set").format(path=path), 3000)
 
     # ---- その他操作 ----
     def refresh(self) -> None:
@@ -1580,16 +1595,16 @@ class MainWindow(QMainWindow):
     def _show_help_menu(self) -> None:
         """? ボタン: ヘルプ項目をポップアップメニューで表示。"""
         menu = QMenu(self)
-        menu.addAction("バグを報告…", self._report_bug)
+        menu.addAction(_("menu_report_bug"), self._report_bug)
         menu.addSeparator()
-        menu.addAction("Fibro について…", self._show_about)
+        menu.addAction(_("menu_about"), self._show_about)
         pos = self.help_btn.mapToGlobal(self.help_btn.rect().bottomLeft())
         menu.exec(pos)
 
     def _show_shortcuts(self) -> None:
         """⌘ ボタン: ショートカット一覧を参照専用ポップアップで表示。"""
         dialog = QDialog(self)
-        dialog.setWindowTitle("ショートカット一覧")
+        dialog.setWindowTitle(_("shortcuts_title"))
         # 枠（タイトルバー＋×ボタン）なし。設定／ヘルプのメニューと同様に
         # 外側クリックで自動的に閉じる。
         dialog.setWindowFlags(Qt.WindowType.Popup)
@@ -1598,7 +1613,7 @@ class MainWindow(QMainWindow):
         outer.setSpacing(10)
 
         for category, items in SHORTCUTS:
-            heading = QLabel(category)
+            heading = QLabel(_(category))
             heading.setStyleSheet("font-weight: 600;")
             outer.addWidget(heading)
             grid = QGridLayout()
@@ -1609,7 +1624,7 @@ class MainWindow(QMainWindow):
                 key_label = QLabel(key)
                 key_label.setStyleSheet("color: palette(highlight);")
                 grid.addWidget(key_label, row, 0)
-                grid.addWidget(QLabel(label), row, 1)
+                grid.addWidget(QLabel(_(label)), row, 1)
             grid.setColumnStretch(1, 1)
             outer.addLayout(grid)
 
@@ -1626,7 +1641,7 @@ class MainWindow(QMainWindow):
         if app:
             theme = self.theme_manager.toggle(app)
             self.statusBar().showMessage(
-                f"テーマ: {'ダーク' if theme == 'dark' else 'ライト'}", 3000)
+                _("theme_dark" if theme == "dark" else "theme_light"), 3000)
             self.favorites.refresh()
             self.recent_sidebar.refresh()
             self.settings_btn.setIcon(
@@ -1649,16 +1664,16 @@ class MainWindow(QMainWindow):
         if not ok or not new_name or new_name == old_name:
             return
         if (Path(self.current_path) / new_name).exists():
-            QMessageBox.warning(self, "名前の変更",
-                                f"「{new_name}」は既に存在します。")
+            QMessageBox.warning(self, _("rename_title"),
+                                _("dlg_rename_exists").format(name=new_name))
             return
         try:
             self.rename_executor.execute(
                 self.current_path, [(old_name, new_name)])
             self.statusBar().showMessage(
-                f"{old_name} → {new_name}（Ctrl+Zで取り消し）", 5000)
+                _("single_rename_done").format(old=old_name, new=new_name), 5000)
         except OSError as e:
-            QMessageBox.critical(self, "リネーム失敗", str(e))
+            QMessageBox.critical(self, _("dlg_rename_fail"), str(e))
 
     # ---- 検索 ----
     def _ensure_search_panel(self):
@@ -1668,7 +1683,7 @@ class MainWindow(QMainWindow):
             self.search_panel = SearchPanel(settings=self.theme_manager)
             self.search_panel.file_selected.connect(
                 self._on_search_file_selected)
-            self.search_dock = QDockWidget("検索", self)
+            self.search_dock = QDockWidget(_("search_title"), self)
             self.search_dock.setWidget(self.search_panel)
             self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea,
                                self.search_dock)
@@ -1757,7 +1772,7 @@ class MainWindow(QMainWindow):
         paths = self.selected_paths()
         if not paths:
             QMessageBox.information(
-                self, "一括リネーム", "リネームするファイルを選択してください。")
+                self, _("dlg_rename_select"), _("dlg_rename_select_msg"))
             return
         directory = self.current_path
         selected = [Path(p).name for p in paths]
@@ -1769,23 +1784,24 @@ class MainWindow(QMainWindow):
                               self.rename_executor, self,
                               preset_store=self.preset_store)
         if dialog.exec():
-            self.statusBar().showMessage("リネームが完了しました（Ctrl+Zで取り消し）", 5000)
+            self.statusBar().showMessage(_("rename_done"), 5000)
 
     def undo_last(self) -> None:
         if self.rename_executor.can_undo:
             try:
                 record = self.rename_executor.undo()
                 self.statusBar().showMessage(
-                    f"リネーム {len(record.mapping)}件を取り消しました", 3000)
+                    _("undo_rename_done").format(n=len(record.mapping)), 3000)
             except (OSError, RuntimeError) as e:
-                QMessageBox.critical(self, "Undo失敗", str(e))
+                QMessageBox.critical(self, _("undo_failed"), str(e))
         elif self.file_ops.can_undo:
             try:
                 record = self.file_ops.undo()
-                kind = "移動" if record.kind == "move" else "コピー"
+                kind = _("kind_move" if record.kind == "move" else "kind_copy")
                 self.statusBar().showMessage(
-                    f"{kind} {len(record.pairs)}件を取り消しました", 3000)
+                    _("undo_move_done").format(
+                        kind=kind, n=len(record.pairs)), 3000)
             except (OSError, RuntimeError) as e:
-                QMessageBox.critical(self, "Undo失敗", str(e))
+                QMessageBox.critical(self, _("undo_failed"), str(e))
         else:
-            self.statusBar().showMessage("取り消せる操作はありません", 3000)
+            self.statusBar().showMessage(_("undo_none"), 3000)

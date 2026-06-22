@@ -20,15 +20,17 @@ from PySide6.QtWidgets import (
 from app.gui.async_icons import shared_icon_provider
 from app.gui.dnd_views import FileIconView, FileTableView
 from app.gui.thumbnails import ThumbnailDelegate
+from app.i18n import _
 
 
-# 一覧の列見出し（日本語）。将来の多言語対応時はここを差し替える。
+# 一覧の列見出し（列インデックス → i18n キー）。
+# 表示時に _() で解決する（モジュール読込時に評価すると言語適用前になるため）。
 # キーは QFileSystemModel の列インデックス（0=名前 1=サイズ 2=種類 3=更新日時）。
-COLUMN_TITLES = {
-    0: "名前",
-    1: "サイズ",
-    2: "種類",
-    3: "更新日時",
+_COLUMN_KEYS = {
+    0: "col_name",
+    1: "col_size",
+    2: "col_type",
+    3: "col_modified",
 }
 
 
@@ -81,8 +83,8 @@ class CurrentDirFilterProxy(QSortFilterProxyModel):
         """列見出しを日本語表示にする（横方向の表示テキストのみ差し替え）。"""
         if (orientation == Qt.Orientation.Horizontal
                 and role == Qt.ItemDataRole.DisplayRole
-                and section in COLUMN_TITLES):
-            return COLUMN_TITLES[section]
+                and section in _COLUMN_KEYS):
+            return _(_COLUMN_KEYS[section])
         return super().headerData(section, orientation, role)
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:  # noqa: N802
@@ -231,7 +233,7 @@ class FilePane(QWidget):
         menu = QMenu(self)
         for col in range(1, self.list_model.columnCount()):
             label = self.proxy.headerData(
-                col, Qt.Orientation.Horizontal) or f"列{col}"
+                col, Qt.Orientation.Horizontal) or _("col_n").format(n=col)
             action = menu.addAction(str(label))
             action.setCheckable(True)
             action.setChecked(not self.table.isColumnHidden(col))

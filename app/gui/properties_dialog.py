@@ -7,6 +7,8 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLabel
 
+from app.i18n import _
+
 
 def _human_size(size: float) -> str:
     for unit in ("B", "KB", "MB", "GB", "TB"):
@@ -24,23 +26,29 @@ class PropertiesDialog(QDialog):
     def __init__(self, path: str, parent=None) -> None:
         super().__init__(parent)
         p = Path(path)
-        self.setWindowTitle(f"プロパティ — {p.name}")
+        self.setWindowTitle(_("prop_title").format(name=p.name))
         layout = QFormLayout(self)
 
         try:
             st = p.stat()
-            kind = "フォルダ" if p.is_dir() else f"ファイル ({p.suffix or 'なし'})"
+            if p.is_dir():
+                kind = _("prop_kind_folder")
+            elif p.suffix:
+                kind = _("prop_kind_file").format(ext=p.suffix)
+            else:
+                kind = _("prop_kind_noext")
             rows = [
-                ("名前", p.name),
-                ("種類", kind),
-                ("場所", str(p.parent)),
-                ("サイズ", "-" if p.is_dir() else _human_size(st.st_size)),
-                ("作成日時", _fmt_time(st.st_ctime)),
-                ("更新日時", _fmt_time(st.st_mtime)),
-                ("読み取り専用", "はい" if not os.access(path, os.W_OK) else "いいえ"),
+                (_("prop_row_name"), p.name),
+                (_("prop_row_kind"), kind),
+                (_("prop_row_location"), str(p.parent)),
+                (_("prop_row_size"), "-" if p.is_dir() else _human_size(st.st_size)),
+                (_("prop_row_created"), _fmt_time(st.st_ctime)),
+                (_("prop_row_modified"), _fmt_time(st.st_mtime)),
+                (_("prop_row_readonly"),
+                 _("prop_yes") if not os.access(path, os.W_OK) else _("prop_no")),
             ]
         except OSError as e:
-            rows = [("エラー", str(e))]
+            rows = [(_("prop_error"), str(e))]
 
         for label, value in rows:
             value_label = QLabel(str(value))

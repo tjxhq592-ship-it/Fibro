@@ -395,6 +395,11 @@ class ThemeManager:
     def __init__(self, settings_path: str | Path) -> None:
         self._path = Path(settings_path)
         self._settings = self._load()
+        # 言語をここで適用する。MainWindow は theme_manager 生成後・UI 構築前の
+        # この時点を通るため、_() を使う全ウィジェットが正しい言語で生成される
+        # （main.py は MainWindow() を theme.apply() より先に呼ぶため apply() では遅い）。
+        from app.i18n import apply_language
+        apply_language(self._settings.get("language", "ja"))
 
     def _load(self) -> dict:
         try:

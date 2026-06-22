@@ -366,6 +366,7 @@
   ('app.gui.zoom',
    'C:\\Users\\hiros\\projects\\Fibro\\app\\gui\\zoom.py',
    'PYMODULE'),
+  ('app.i18n', 'C:\\Users\\hiros\\projects\\Fibro\\app\\i18n.py', 'PYMODULE'),
   ('app.imagetypes',
    'C:\\Users\\hiros\\projects\\Fibro\\app\\imagetypes.py',
    'PYMODULE'),

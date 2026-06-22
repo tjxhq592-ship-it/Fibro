@@ -17,6 +17,7 @@ from app.engine.index_engine import SearchIndex
 from app.engine.search_engine import (
     SearchHit, SearchMode, SearchOptions, SearchStats, is_wildcard, search,
 )
+from app.i18n import _
 from app.paths import INDEX_DB
 
 INDEX_MAX_AGE_SEC = 10 * 60  # これより古いインデックスは自動再構築
@@ -75,14 +76,14 @@ class SearchWorker(QThread):
             built_at = index.indexed_at(self._root)
             count = -1
             if built_at is None:
-                self.status.emit("インデックス構築中…")
+                self.status.emit(_("search_building"))
                 count = index.build(self._root, cancel=self._cancel)
                 if count < 0:  # キャンセル
                     self.finished_ok.emit(0, 0)
                     return
             elif time.time() - built_at > INDEX_MAX_AGE_SEC:
                 # 期限切れは全再構築せず差分更新（書込量を抑える）
-                self.status.emit("インデックス更新中…")
+                self.status.emit(_("search_updating"))
                 count = index.update(self._root, cancel=self._cancel)
                 if count < 0:  # キャンセル
                     self.finished_ok.emit(0, 0)
@@ -132,22 +133,22 @@ class SearchPanel(QWidget):
 
     def set_root(self, path: str) -> None:
         self._root = path
-        self.root_label.setText(f"検索場所: {path}")
+        self.root_label.setText(_("search_root").format(path=path))
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
 
-        self.root_label = QLabel(f"検索場所: {self._root}")
+        self.root_label = QLabel(_("search_root").format(path=self._root))
         self.root_label.setWordWrap(True)
         layout.addWidget(self.root_label)
 
         row = QHBoxLayout()
         self.keyword_edit = QLineEdit()
-        self.keyword_edit.setPlaceholderText("検索キーワード…")
+        self.keyword_edit.setPlaceholderText(_("search_keyword_ph"))
         self.keyword_edit.returnPressed.connect(self.start_search)
-        self.search_btn = QPushButton("検索")
-        self.cancel_btn = QPushButton("キャンセル")
+        self.search_btn = QPushButton(_("search_btn"))
+        self.cancel_btn = QPushButton(_("search_cancel_btn"))
         self.cancel_btn.setEnabled(False)
         self.search_btn.clicked.connect(self.start_search)
         self.cancel_btn.clicked.connect(self.cancel_search)
@@ -157,11 +158,11 @@ class SearchPanel(QWidget):
         layout.addLayout(row)
 
         modes = QHBoxLayout()
-        self.mode_filename = QCheckBox("ファイル名")
+        self.mode_filename = QCheckBox(_("search_filename"))
         self.mode_filename.setChecked(True)
-        self.mode_text = QCheckBox("テキスト")
+        self.mode_text = QCheckBox(_("search_text"))
         self.mode_excel = QCheckBox("Excel")
-        self.case_check = QCheckBox("大小区別")
+        self.case_check = QCheckBox(_("search_case"))
         for w in (self.mode_filename, self.mode_text, self.mode_excel,
                   self.case_check):
             modes.addWidget(w)
@@ -169,16 +170,11 @@ class SearchPanel(QWidget):
         layout.addLayout(modes)
 
         opts_row = QHBoxLayout()
-        self.recursive_check = QCheckBox("サブフォルダーも検索")
-        self.index_check = QCheckBox("高速インデックス")
-        self.index_check.setToolTip(
-            "ファイル名検索を SQLite FTS5 インデックスで高速化。\n"
-            "初回と10分経過後は自動で再構築します。\n"
-            "（ファイル名モードのみ・ワイルドカード/サブフォルダOFFとは併用不可）")
+        self.recursive_check = QCheckBox(_("search_recursive"))
+        self.index_check = QCheckBox(_("search_index"))
+        self.index_check.setToolTip(_("search_index_tip"))
         # キーワードに * や ? があれば自動でワイルドカード照合（設定不要）。
-        self.keyword_edit.setToolTip(
-            "部分一致で検索。* や ? を含めると *.md / file_?.txt などの"
-            "パターン照合になります。")
+        self.keyword_edit.setToolTip(_("search_partial_tip"))
         # デフォルト値。signal 接続は _load_options() の後（__init__）で行う。
         self.recursive_check.setChecked(True)
         opts_row.addWidget(self.recursive_check)
@@ -232,7 +228,7 @@ class SearchPanel(QWidget):
             return
         self.cancel_search()  # 進行中があれば止める
         self.results.clear()
-        self.status_label.setText("検索中…")
+        self.status_label.setText(_("search_running"))
         self.search_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
 
@@ -301,10 +297,10 @@ class SearchPanel(QWidget):
         self.results.setUpdatesEnabled(True)
         if self._capped:
             self.status_label.setText(
-                f"検索中… 上位{MAX_RESULTS}件を表示中"
-                f"（一致が多すぎます・絞り込んでください）")
+                _("search_cap_running").format(max=MAX_RESULTS))
         else:
-            self.status_label.setText(f"検索中… {self.results.count()}件")
+            self.status_label.setText(
+                _("search_running_n").format(n=self.results.count()))
 
     def _on_finished(self, scanned: int, skipped: int) -> None:
         self._flush_hits()
@@ -312,14 +308,20 @@ class SearchPanel(QWidget):
         self.search_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
         if self._capped:
-            head = (f"一致{self._total_hits}件中 上位{MAX_RESULTS}件を表示"
-                    f"（多すぎます・絞り込んでください）")
+            if skipped:
+                text = _("search_cap_done_skip").format(
+                    total=self._total_hits, max=MAX_RESULTS,
+                    scanned=scanned, skipped=skipped)
+            else:
+                text = _("search_cap_done").format(
+                    total=self._total_hits, max=MAX_RESULTS, scanned=scanned)
+        elif skipped:
+            text = _("search_done_skip").format(
+                n=self.results.count(), scanned=scanned, skipped=skipped)
         else:
-            head = f"{self.results.count()}件ヒット"
-        text = f"{head} （{scanned}ファイル走査"
-        if skipped:
-            text += f"、{skipped}件スキップ"
-        self.status_label.setText(text + "）")
+            text = _("search_done_n").format(
+                n=self.results.count(), scanned=scanned)
+        self.status_label.setText(text)
 
     def _on_item_activated(self, item: QListWidgetItem) -> None:
         """検索結果クリック時、ファイルを選択（親フォルダへ navigate して select）。"""

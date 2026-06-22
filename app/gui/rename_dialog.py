@@ -18,14 +18,16 @@ from app.engine.rename_engine import (
 )
 from app.engine.rename_history import RenameExecutor
 from app.gui.theme import status_colors
+from app.i18n import _
 from app.models.rename_presets import RenamePresetStore
 
-_STATUS_LABEL = {
-    Status.OK: "✓",
-    Status.UNCHANGED: "- 変更なし",
-    Status.RESOLVED: "⚠ 衝突→連番",
-    Status.CONFLICT: "✗ 衝突",
-    Status.INVALID: "✗ 無効な名前",
+# Status → i18n キー。表示時に _() で解決する（モジュール読込は言語適用前のため）。
+_STATUS_KEY = {
+    Status.OK: "status_ok",
+    Status.UNCHANGED: "status_unchanged",
+    Status.RESOLVED: "status_resolved",
+    Status.CONFLICT: "status_conflict",
+    Status.INVALID: "status_invalid",
 }
 
 
@@ -47,7 +49,7 @@ class RenameDialog(QDialog):
                  existing_names: set[str], executor: RenameExecutor,
                  parent=None, preset_store: RenamePresetStore | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle(f"一括リネーム — {len(selected_names)}件")
+        self.setWindowTitle(_("brename_title").format(n=len(selected_names)))
         self.resize(720, 480)
         self._directory = directory
         self._names = selected_names
@@ -75,13 +77,13 @@ class RenameDialog(QDialog):
         # プリセット行（preset_store がある時のみ表示）
         if self._preset_store is not None:
             preset_row = QHBoxLayout()
-            preset_row.addWidget(QLabel("プリセット:"))
+            preset_row.addWidget(QLabel(_("brename_preset")))
             self.preset_combo = QComboBox()
             self.preset_combo.setMinimumWidth(160)
             preset_row.addWidget(self.preset_combo, stretch=1)
-            load_btn = QPushButton("読み込み")
-            save_btn = QPushButton("保存…")
-            del_btn = QPushButton("削除")
+            load_btn = QPushButton(_("brename_load"))
+            save_btn = QPushButton(_("brename_save"))
+            del_btn = QPushButton(_("brename_delete"))
             load_btn.clicked.connect(self._load_selected_preset)
             save_btn.clicked.connect(self._save_preset)
             del_btn.clicked.connect(self._delete_selected_preset)
@@ -92,14 +94,14 @@ class RenameDialog(QDialog):
         grid = QGridLayout()
         self.search_edit = QLineEdit()
         self.replace_edit = QLineEdit()
-        self.replace_edit.setPlaceholderText("連番は ${n}")
-        self.regex_check = QCheckBox("正規表現")
+        self.replace_edit.setPlaceholderText(_("brename_replace_ph"))
+        self.regex_check = QCheckBox(_("brename_regex"))
         self.target_combo = QComboBox()
-        self.target_combo.addItem("名前", Target.NAME)
-        self.target_combo.addItem("拡張子", Target.EXT)
-        self.target_combo.addItem("両方", Target.BOTH)
+        self.target_combo.addItem(_("brename_target_name"), Target.NAME)
+        self.target_combo.addItem(_("brename_target_ext"), Target.EXT)
+        self.target_combo.addItem(_("brename_target_both"), Target.BOTH)
         self.case_combo = QComboBox()
-        self.case_combo.addItem("そのまま", CaseMode.KEEP)
+        self.case_combo.addItem(_("brename_case_keep"), CaseMode.KEEP)
         self.case_combo.addItem("UPPER", CaseMode.UPPER)
         self.case_combo.addItem("lower", CaseMode.LOWER)
         self.case_combo.addItem("Title", CaseMode.TITLE)
@@ -107,22 +109,22 @@ class RenameDialog(QDialog):
         self.counter_digits = QSpinBox(minimum=1, maximum=10, value=3)
         self.counter_step = QSpinBox(minimum=1, maximum=9999, value=1)
 
-        grid.addWidget(QLabel("検索:"), 0, 0)
+        grid.addWidget(QLabel(_("brename_search_lbl")), 0, 0)
         grid.addWidget(self.search_edit, 0, 1)
         grid.addWidget(self.regex_check, 0, 2)
-        grid.addWidget(QLabel("対象:"), 0, 3)
+        grid.addWidget(QLabel(_("brename_target_lbl")), 0, 3)
         grid.addWidget(self.target_combo, 0, 4)
-        grid.addWidget(QLabel("置換:"), 1, 0)
+        grid.addWidget(QLabel(_("brename_replace_lbl")), 1, 0)
         grid.addWidget(self.replace_edit, 1, 1)
-        grid.addWidget(QLabel("大小:"), 1, 3)
+        grid.addWidget(QLabel(_("brename_case_lbl")), 1, 3)
         grid.addWidget(self.case_combo, 1, 4)
 
         counter_row = QHBoxLayout()
-        counter_row.addWidget(QLabel("連番 ${n}:  開始"))
+        counter_row.addWidget(QLabel(_("brename_counter_lbl")))
         counter_row.addWidget(self.counter_start)
-        counter_row.addWidget(QLabel("桁"))
+        counter_row.addWidget(QLabel(_("brename_digits_lbl")))
         counter_row.addWidget(self.counter_digits)
-        counter_row.addWidget(QLabel("増分"))
+        counter_row.addWidget(QLabel(_("brename_step_lbl")))
         counter_row.addWidget(self.counter_step)
         counter_row.addStretch()
         grid.addLayout(counter_row, 2, 1, 1, 4)
@@ -133,7 +135,9 @@ class RenameDialog(QDialog):
         layout.addWidget(self.rule_error)
 
         self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["現在名", "新名", "状態"])
+        self.table.setHorizontalHeaderLabels(
+            [_("brename_col_current"), _("brename_col_new"),
+             _("brename_col_status")])
         self.table.horizontalHeader().setStretchLastSection(False)
         self.table.setColumnWidth(0, 260)
         self.table.setColumnWidth(1, 260)
@@ -145,8 +149,8 @@ class RenameDialog(QDialog):
         layout.addWidget(self.summary)
 
         buttons = QDialogButtonBox()
-        self.apply_btn = QPushButton("実行")
-        cancel_btn = QPushButton("キャンセル")
+        self.apply_btn = QPushButton(_("brename_apply"))
+        cancel_btn = QPushButton(_("dlg_cancel"))
         buttons.addButton(self.apply_btn, QDialogButtonBox.ButtonRole.AcceptRole)
         buttons.addButton(cancel_btn, QDialogButtonBox.ButtonRole.RejectRole)
         self.apply_btn.clicked.connect(self._execute)
@@ -224,7 +228,7 @@ class RenameDialog(QDialog):
 
     def _save_preset(self) -> None:
         name, ok = QInputDialog.getText(
-            self, "プリセットを保存", "プリセット名:",
+            self, _("brename_save_title"), _("brename_save_label"),
             text=self.preset_combo.currentText())
         name = name.strip()
         if not ok or not name:
@@ -255,15 +259,17 @@ class RenameDialog(QDialog):
         for row, item in enumerate(self._plan.items):
             for col, text in enumerate(
                     (item.old_name, item.new_name,
-                     _STATUS_LABEL[item.status])):
+                     _(_STATUS_KEY[item.status]))):
                 cell = QTableWidgetItem(text)
                 cell.setForeground(self._status_color[item.status])
                 self.table.setItem(row, col, cell)
 
         n_change = len(self._plan.changed_items)
-        self.summary.setText(
-            f"変更: {n_change}件 / 全{len(self._plan.items)}件"
-            + ("  （エラー行はスキップされます）" if self._plan.has_errors else ""))
+        summary_text = _("brename_summary").format(
+            change=n_change, total=len(self._plan.items))
+        if self._plan.has_errors:
+            summary_text += _("brename_summary_err")
+        self.summary.setText(summary_text)
         self.apply_btn.setEnabled(n_change > 0)
 
     # ---- 実行 ----
@@ -277,7 +283,7 @@ class RenameDialog(QDialog):
             self._executor.execute(self._directory, pairs)
         except OSError as e:
             QMessageBox.critical(
-                self, "リネーム失敗",
-                f"リネームに失敗しました（変更はロールバック済み）:\n{e}")
+                self, _("brename_fail_title"),
+                _("brename_fail_msg").format(err=e))
             return
         self.accept()
