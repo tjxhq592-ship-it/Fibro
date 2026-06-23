@@ -306,6 +306,7 @@ class MainWindow(QMainWindow):
 
         # --- ペイン（タブ＝主ペイン群 + デュアル用サブペイン） ---
         self._tabs: list[FilePane] = []        # タブ順に並ぶ主ペイン
+        self._pending_paths: dict[int, str] = {}  # index→未ロードパス（遅延ロード）
         self._active_pane: FilePane | None = None
         self._dual = False
 
@@ -676,6 +677,14 @@ class MainWindow(QMainWindow):
     def _on_tab_changed(self, index: int) -> None:
         if not (0 <= index < len(self._tabs)):
             return
+        # 未ロードのタブを初めて選択したとき、ここで遅延ロードを実行する
+        if index in self._pending_paths:
+            path = self._pending_paths.pop(index)
+            pane = self._tabs[index]
+            self.primary_stack.setCurrentWidget(pane)
+            self._set_active_pane(pane)
+            self.navigate(path)
+            return
         pane = self._tabs[index]
         self.primary_stack.setCurrentWidget(pane)
         self._set_active_pane(pane)
@@ -683,6 +692,12 @@ class MainWindow(QMainWindow):
     def close_tab(self, index: int) -> None:
         if len(self._tabs) <= 1 or not (0 <= index < len(self._tabs)):
             return
+        # 閉じるタブの pending を削除し、それより後ろの index を補正する
+        self._pending_paths.pop(index, None)
+        self._pending_paths = {
+            (i - 1 if i > index else i): p
+            for i, p in self._pending_paths.items()
+        }
         pane = self._tabs.pop(index)
         self.primary_stack.removeWidget(pane)
         self.tab_bar.removeTab(index)  # currentChanged → _on_tab_changed
@@ -779,8 +794,22 @@ class MainWindow(QMainWindow):
                  if isinstance(saved, list) else [])
         if not paths:
             paths = [self._default_dir()]
-        for p in paths:
-            self.new_tab(p)
+
+        for i, p in enumerate(paths):
+            pane = self._make_pane()
+            self._tabs.append(pane)
+            self.primary_stack.addWidget(pane)
+            idx = self.tab_bar.addTab(self._tab_title(p))
+            self._install_tab_close_button(idx)
+            self.tab_bar.setTabToolTip(idx, p)
+
+            if i == 0:
+                # アクティブタブのみ即ロード（setRootPath + navigate を実行）
+                self.navigate(p)
+            else:
+                # 非アクティブタブはパスのみ記録し、navigate を遅延させる
+                self._pending_paths[i] = p
+
         self.tab_bar.setCurrentIndex(0)
         if self.theme_manager.get("dual_pane", False):
             self.toggle_dual_pane()

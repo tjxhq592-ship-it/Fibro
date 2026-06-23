@@ -2,6 +2,8 @@
 __pycache__/
 *.pyc
 config/favorites.json
+config/settings.json
+config/recent.json
 logs/
 dist/
 build/
