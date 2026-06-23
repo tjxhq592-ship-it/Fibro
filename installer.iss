@@ -6,7 +6,7 @@
 ; 出力: installer_output\FibroSetup-<version>.exe
 
 #define AppName "Fibro"
-#define AppVersion "1.5.0"
+#define AppVersion "1.6.0"
 #define AppPublisher "hiros"
 #define AppExeName "Fibro.exe"
 

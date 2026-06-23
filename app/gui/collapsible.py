@@ -1,18 +1,48 @@
 """手動で開閉できる折りたたみセクション。
 
-クリック可能なヘッダーバー（タイトル左＋シェブロン ∨/∧ 右）と本体ウィジェットを
+クリック可能なヘッダーバー（シェブロンアイコン左＋タイトル）と本体ウィジェットを
 縦に並べ、ヘッダークリックで本体を畳む／開く。縦 QSplitter に複数並べると、
 畳んだ分の縦スペースが残りの展開セクションへ自動再配分される。
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QByteArray, Qt, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 # Qt が縦サイズ無制限に使う番兵値（QWIDGETSIZE_MAX）。
 _QWIDGETSIZE_MAX = (1 << 24) - 1
+
+# Tabler Icons → chevron-right / chevron-down の SVG テンプレート。
+# stroke-width=2, stroke-linecap/linejoin=round で Tabler アウトラインの見た目を再現。
+_CHEVRON_SVG = """\
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+     fill="none" stroke="{color}" stroke-width="2"
+     stroke-linecap="round" stroke-linejoin="round">
+  <path d="{path}"/>
+</svg>"""
+
+# chevron-right: ▷ 相当（折りたたみ時）
+_PATH_RIGHT = "M9 6l6 6-6 6"
+# chevron-down: ▽ 相当（展開時）
+_PATH_DOWN = "M6 9l6 6 6-6"
+
+
+def _chevron_pixmap(collapsed: bool, dark: bool = True) -> QPixmap:
+    """折りたたみ状態に応じた chevron QPixmap を返す。
+
+    dark=True  → stroke #9598a0（ダークテーマの text_hint）
+    dark=False → stroke #6b6d75（ライトテーマの text_hint）
+    テーマに合わせた色にしておき、どちらも可読性の高いグレー。
+    """
+    color = "#9598a0" if dark else "#6b6d75"
+    path = _PATH_RIGHT if collapsed else _PATH_DOWN
+    svg = _CHEVRON_SVG.format(color=color, path=path).encode()
+    px = QPixmap()
+    px.loadFromData(QByteArray(svg), "SVG")
+    return px
 
 
 class _HeaderBar(QFrame):
@@ -27,14 +57,35 @@ class _HeaderBar(QFrame):
 
         row = QHBoxLayout(self)
         row.setContentsMargins(8, 4, 8, 4)
-        self._chevron = QLabel("▽")
-        self._chevron.setFixedWidth(16)
+
+        self._chevron_label = QLabel()
+        self._chevron_label.setFixedWidth(16)
+        self._chevron_label.setAlignment(
+            Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+
         self._title = QLabel(title.upper())
-        row.addWidget(self._chevron)
+
+        row.addWidget(self._chevron_label)
         row.addWidget(self._title, stretch=1)
 
+        # 初期状態は展開（collapsed=False）
+        self._update_chevron(collapsed=False)
+
+    def _update_chevron(self, collapsed: bool) -> None:
+        """テーマを QApplication のパレットから判定してアイコンを更新する。"""
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtGui import QPalette
+        app = QApplication.instance()
+        dark = True
+        if app is not None:
+            bg = app.palette().color(QPalette.ColorRole.Window)
+            # ウィンドウ背景の輝度が低い（<128）ならダーク
+            dark = bg.lightness() < 128
+        px = _chevron_pixmap(collapsed, dark=dark)
+        self._chevron_label.setPixmap(px)
+
     def set_collapsed(self, collapsed: bool) -> None:
-        self._chevron.setText("▷" if collapsed else "▽")
+        self._update_chevron(collapsed)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 — Qt API
         if event.button() == Qt.MouseButton.LeftButton:

@@ -32,6 +32,7 @@ from app.gui.dnd_views import FolderTreeView
 from app.gui.file_pane import FilePane
 from app.gui.favorites_sidebar import FavoritesSidebar
 from app.gui.icons import material_icon
+from app.gui.places_sidebar import PlacesSidebar
 from app.gui.preview_dialog import QuickPreviewDialog
 from app.gui.properties_dialog import PropertiesDialog
 from app.gui.recent_sidebar import RecentSidebar
@@ -487,14 +488,18 @@ class MainWindow(QMainWindow):
         self.favorites.path_selected.connect(self.navigate)
         self.recent_sidebar = RecentSidebar(self.recent_store)
         self.recent_sidebar.path_selected.connect(self.navigate)
+        self.places_sidebar = PlacesSidebar()
+        self.places_sidebar.path_selected.connect(self.navigate)
         from app.gui.collapsible import CollapsibleSection
         self.fav_section = CollapsibleSection(_("sidebar_fav"), self.favorites)
         self.recent_section = CollapsibleSection(_("sidebar_history"), self.recent_sidebar)
+        self.places_section = CollapsibleSection(_("sidebar_places"), self.places_sidebar)
         self.tree_section = CollapsibleSection(_("sidebar_tree"), self.tree)
         left = QSplitter(Qt.Orientation.Vertical)
         left.setHandleWidth(1)
         left.addWidget(self.fav_section)
         left.addWidget(self.recent_section)
+        left.addWidget(self.places_section)
         left.addWidget(self.tree_section)
         # 全セクション折りたたみ時に左ペインが縦に潰れないよう、
         # 余白を吸収する伸縮スペーサーを最下段に置く（初期高さ0）。
@@ -502,8 +507,9 @@ class MainWindow(QMainWindow):
         left_spacer.setSizePolicy(
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         left.addWidget(left_spacer)
-        left.setSizes([160, 160, 320, 0])
-        for sec in (self.fav_section, self.recent_section, self.tree_section):
+        left.setSizes([160, 160, 100, 320, 0])
+        for sec in (self.fav_section, self.recent_section,
+                    self.places_section, self.tree_section):
             sec.toggled.connect(lambda _checked: self._save_layout())
 
         left_box = QFrame()
@@ -527,6 +533,7 @@ class MainWindow(QMainWindow):
         from app.gui.zoom import ZoomController
         ZoomController(self.favorites.tree, "favorites", self.theme_manager)
         ZoomController(self.recent_sidebar.tree, "recent", self.theme_manager)
+        ZoomController(self.places_sidebar.list, "places", self.theme_manager)
         ZoomController(self.tree, "folder_tree", self.theme_manager)
 
         # 検索ドックは初回 Ctrl+F まで作らない（起動を速く保つ。SearchPanel は
@@ -863,6 +870,9 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         menu.addAction(_("menu_toggle_theme"), self.toggle_theme)
         menu.addAction(_("menu_set_initial"), self._set_initial_directory)
+        # USB 抜き差し後などに場所一覧を手動で再スキャン
+        menu.addAction(_("menu_refresh_places"),
+                       lambda: self.places_sidebar.refresh())
         # 言語切り替えサブメニュー（保存→次回起動時に反映）
         lang_menu = menu.addMenu(_("menu_language"))
         lang_menu.addAction(_("menu_lang_ja"), lambda: self._set_language("ja"))
@@ -1746,8 +1756,12 @@ class MainWindow(QMainWindow):
         if sizes := layout.get("left_splitter"):
             self._left_splitter.setSizes([int(s) for s in sizes])
         if collapsed := layout.get("left_collapsed"):
+            # zip は短い方に合わせて停止するため、旧 settings.json（3要素:
+            # fav/recent/tree）でもエラーにならない。アップグレード直後の一度だけ
+            # 旧3要素目が places に適用され tree が既定になるが、次回保存で4要素に
+            # 是正される（クラッシュ回避を優先した許容挙動）。
             sections = (self.fav_section, self.recent_section,
-                        self.tree_section)
+                        self.places_section, self.tree_section)
             for sec, c in zip(sections, collapsed):
                 sec.set_collapsed(bool(c))
         if sizes := layout.get("pane_splitter"):
@@ -1763,7 +1777,8 @@ class MainWindow(QMainWindow):
         h = self.tab_bar.sizeHint().height()
         if h <= 0:
             return
-        for sec in (self.fav_section, self.recent_section, self.tree_section):
+        for sec in (self.fav_section, self.recent_section,
+                    self.places_section, self.tree_section):
             sec.set_header_height(h)
 
     def _save_layout(self) -> None:
@@ -1775,6 +1790,7 @@ class MainWindow(QMainWindow):
             "left_collapsed": [
                 self.fav_section.is_collapsed(),
                 self.recent_section.is_collapsed(),
+                self.places_section.is_collapsed(),
                 self.tree_section.is_collapsed(),
             ],
             "window": [g.x(), g.y(), g.width(), g.height()],

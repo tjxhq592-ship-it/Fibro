@@ -41,6 +41,7 @@ _STRINGS: dict[str, dict[str, str]] = {
     "menu_settings":      {"ja": "設定",            "en": "Settings"},
     "menu_toggle_theme":  {"ja": "テーマ切替（ダーク／ライト）", "en": "Toggle Theme (Dark/Light)"},
     "menu_set_initial":   {"ja": "初期ディレクトリを設定…",     "en": "Set Initial Directory…"},
+    "menu_refresh_places": {"ja": "場所を更新（ドライブ/クラウド）", "en": "Refresh Places (Drives/Cloud)"},
     "menu_override_wine": {"ja": "標準フォルダのオーバーライド", "en": "Override Default Folder"},
     "menu_language":      {"ja": "言語",            "en": "Language"},
     "menu_lang_ja":       {"ja": "日本語",          "en": "日本語 (Japanese)"},
@@ -64,6 +65,7 @@ _STRINGS: dict[str, dict[str, str]] = {
     "sidebar_fav":        {"ja": "お気に入り",      "en": "Favorites"},
     "sidebar_history":    {"ja": "履歴",            "en": "History"},
     "sidebar_tree":       {"ja": "フォルダツリー",  "en": "Folder Tree"},
+    "sidebar_places":     {"ja": "クラウド / ネットワーク", "en": "Cloud / Network"},
     "sidebar_recent":     {"ja": "最近使った",      "en": "Recently Used"},
     "sidebar_frequent":   {"ja": "よく使う",        "en": "Frequently Used"},
 
