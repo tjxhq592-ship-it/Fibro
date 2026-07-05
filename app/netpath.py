@@ -15,9 +15,15 @@ from pathlib import Path
 _EXECUTOR = ThreadPoolExecutor(max_workers=2)
 
 
-def reachable(path: str | Path, timeout: float = 2.0) -> bool:
-    """path がディレクトリとして到達可能か。timeout 内に返らなければ False。"""
-    future = _EXECUTOR.submit(os.path.isdir, str(path))
+def reachable(path: str | Path, timeout: float = 2.0,
+              require_dir: bool = True) -> bool:
+    """path が到達可能か。timeout 内に返らなければ False。
+
+    require_dir=True ならディレクトリであること、False なら存在（ファイル可）を
+    確認する。お気に入りのファイル登録では存在確認（require_dir=False）を使う。
+    """
+    check = os.path.isdir if require_dir else os.path.exists
+    future = _EXECUTOR.submit(check, str(path))
     try:
         return bool(future.result(timeout=timeout))
     except (FutureTimeout, OSError):

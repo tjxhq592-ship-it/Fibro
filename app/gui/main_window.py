@@ -12,16 +12,16 @@ from pathlib import Path
 
 from PySide6.QtCore import (
     QDir, QFileInfo, QItemSelectionModel, QModelIndex, QRunnable, Qt,
-    QThreadPool, QTimer, Signal,
+    QThread, QThreadPool, QTimer, Signal,
 )
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QDialog, QDialogButtonBox, QDockWidget, QFileIconProvider,
     QFileSystemModel, QFormLayout, QFrame, QGridLayout, QHBoxLayout,
     QInputDialog, QLabel,
-    QLineEdit, QMainWindow, QMenu, QMessageBox, QSizePolicy, QSplitter,
-    QStackedLayout, QStackedWidget, QStatusBar, QStyle, QTabBar, QToolButton,
-    QTreeView, QVBoxLayout, QWidget,
+    QLineEdit, QMainWindow, QMenu, QMessageBox, QProgressBar, QSizePolicy,
+    QSplitter, QStackedLayout, QStackedWidget, QStatusBar, QStyle, QTabBar,
+    QToolButton, QTreeView, QVBoxLayout, QWidget,
 )
 
 from app.engine.file_ops import FileOps
@@ -304,6 +304,9 @@ class MainWindow(QMainWindow):
         self.preset_store = RenamePresetStore(CONFIG_DIR / "rename_presets.json")
         self.theme_manager = ThemeManager(CONFIG_DIR / "settings.json")
         self._clipboard: tuple[str, list[str]] | None = None  # ("copy"|"cut", paths)
+        # 実行中のコピー/移動（非同期）。実行中のみ非 None。
+        self._copy_thread = None
+        self._copy_worker = None
 
         # --- ペイン（タブ＝主ペイン群 + デュアル用サブペイン） ---
         self._tabs: list[FilePane] = []        # タブ順に並ぶ主ペイン
@@ -486,9 +489,10 @@ class MainWindow(QMainWindow):
         # 左ペイン: お気に入い（上）+ 履歴（中）+ フォルダツリー（下）
         self.favorites = FavoritesSidebar(self.favorite_store)
         self.favorites.path_selected.connect(self.navigate)
+        self.favorites.file_activated.connect(self._open_file)
         self.recent_sidebar = RecentSidebar(self.recent_store)
         self.recent_sidebar.path_selected.connect(self.navigate)
-        self.places_sidebar = PlacesSidebar()
+        self.places_sidebar = PlacesSidebar(self.theme_manager)
         self.places_sidebar.path_selected.connect(self.navigate)
         from app.gui.collapsible import CollapsibleSection
         self.fav_section = CollapsibleSection(_("sidebar_fav"), self.favorites)
@@ -541,13 +545,32 @@ class MainWindow(QMainWindow):
         self.search_panel = None
         self.search_dock = None
 
-        # 下部: ステータス（選択情報 + ドライブ空き容量）
+        # 下部: ステータス（選択情報 + コピー進捗 + ドライブ空き容量）
         bottom = QHBoxLayout()
         self.selection_label = QLabel(_("sel_0"))
         self.selection_label.setObjectName("statusLabel")
+        # コピー/移動の進捗（実行中のみ表示）。
+        self.progress_label = QLabel("")
+        self.progress_label.setObjectName("statusLabel")
+        self.progress_label.hide()
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setObjectName("copyProgress")
+        self.progress_bar.setFixedWidth(180)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.hide()
+        self.cancel_btn = QToolButton()
+        self.cancel_btn.setObjectName("copyCancel")
+        self.cancel_btn.setText("✕")
+        self.cancel_btn.setToolTip(_("copy_cancel"))
+        self.cancel_btn.setAutoRaise(True)
+        self.cancel_btn.clicked.connect(self._cancel_copy_operation)
+        self.cancel_btn.hide()
         self.disk_label = QLabel("")
         self.disk_label.setObjectName("statusLabel")
         bottom.addWidget(self.selection_label, stretch=1)
+        bottom.addWidget(self.progress_label)
+        bottom.addWidget(self.progress_bar)
+        bottom.addWidget(self.cancel_btn)
         bottom.addWidget(self.disk_label)
         root.addLayout(bottom)
 
@@ -567,6 +590,13 @@ class MainWindow(QMainWindow):
             view.customContextMenuRequested.connect(self._show_context_menu)
             view.preview_requested.connect(self.quick_preview)
             view.open_requested.connect(self._open_selected)
+            # F2: このビューにフォーカスがある時だけ単一リネームを発火。
+            rename_act = QAction("単一リネーム", view)
+            rename_act.setShortcut(QKeySequence("F2"))
+            rename_act.setShortcutContext(
+                Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            rename_act.triggered.connect(self.rename_single)
+            view.addAction(rename_act)
         pane.table.sortByColumn(0, Qt.SortOrder.AscendingOrder)
         pane.set_view_mode(self.theme_manager.get("view_mode", "details"))
         cols = self.theme_manager.get("columns")
@@ -840,7 +870,9 @@ class MainWindow(QMainWindow):
         add("上へ", "Alt+Up", self.go_up)
         add("戻る", "Alt+Left", self.go_back)
         add("進む", "Alt+Right", self.go_forward)
-        add("単一リネーム", "F2", self.rename_single)
+        # F2（単一リネーム）はウィンドウ全体ではなく各ファイルビューにフォーカスが
+        # ある時だけ発火させる（お気に入り等にフォーカス中の誤爆を防ぐ）。
+        # → _make_pane で view ごとに WidgetWithChildrenShortcut として付与。
         add("フィルタへ", "F3", self._focus_filter)
         add("パス入力へ", "F4", self.breadcrumb.focus_path_edit)
         add("更新", "F5", self.refresh)
@@ -1144,12 +1176,11 @@ class MainWindow(QMainWindow):
     def _build_combined_items(self, paths: list[str]):
         """統合メニューに足す Fibro 項目（「お気に入りに追加」のみ）と key→callable。
 
-        シェルの「プロパティ」の直上に挿入される。フォルダ選択時のみ。
+        シェルの「プロパティ」の直上に挿入される。フォルダ・ファイルどちらも対象。
         """
         callables: dict = {}
         items: list = []
-        dirs = [p for p in paths if Path(p).is_dir()]
-        fav_target = dirs[0] if dirs else None
+        fav_target = paths[0] if paths else None
         if fav_target:
             callables["fav"] = lambda: self.favorites.add_favorite(fav_target)
             items.append({"type": "action", "key": "fav",
@@ -1232,8 +1263,8 @@ class MainWindow(QMainWindow):
             menu.addAction(_("ctx_delete"),
                            self.delete_selected_permanent)
             menu.addSeparator()
-            dirs = [p for p in paths if Path(p).is_dir()]
-            fav_target = dirs[0] if dirs else None
+            # フォルダ・ファイルどちらも先頭の選択項目をお気に入りに登録できる
+            fav_target = paths[0] if paths else None
         else:
             fav_target = self.current_path
         if fav_target:
@@ -1327,51 +1358,131 @@ class MainWindow(QMainWindow):
 
     def paste_clipboard(self) -> None:
         # システムクリップボードから読む（エクスプローラーでコピーした物も貼れる）
+        if self._copy_thread is not None:
+            self.statusBar().showMessage(_("copy_busy"), 4000)
+            return
         from app import clipboard_files
         got = clipboard_files.get_files()
         if got is None:
             return
         paths, move = got
         from app.gui.conflict_dialog import make_resolver
-        resolver = make_resolver(self)
-        try:
-            if move:
-                self.file_ops.move(paths, self.current_path, resolver=resolver)
-                clipboard_files.clear()
-                self._clipboard = None
-            else:
-                self.file_ops.copy(paths, self.current_path, resolver=resolver)
-        except OSError as e:
-            QMessageBox.critical(self, _("dlg_paste_fail"), str(e))
+        from app.engine.file_ops import build_plan
+        plan = build_plan(paths, self.current_path, make_resolver(self))
+        if not plan:  # None=中止 / 空=全スキップ
             return
-        self.statusBar().showMessage(_("pasted_n").format(n=len(paths)), 3000)
+        # move の貼り付けはコピー元クリップボードを完了後にクリアする
+        self._start_copy_operation(
+            plan, "move" if move else "copy", clear_clipboard=move)
 
     def _on_files_dropped(self, paths: list, dest: str, copy: bool) -> None:
-        """D&D: 既定は移動、Ctrl押下でコピー。どちらも Undo 可。"""
-        from app.gui.conflict_dialog import make_resolver
-        resolver = make_resolver(self)
-        try:
-            if copy:
-                # 同フォルダへのコピーは「複製」なので衝突ダイアログを出さず
-                # 自動で (2) 付きの名前にする。別フォルダは従来の衝突解決。
-                dest_norm = str(Path(dest))
-                same = [p for p in paths
-                        if str(Path(p).parent) == dest_norm]
-                cross = [p for p in paths
-                         if str(Path(p).parent) != dest_norm]
-                if same:
-                    self.file_ops.copy(same, dest, resolver=None)
-                if cross:
-                    self.file_ops.copy(cross, dest, resolver=resolver)
-            else:
-                self.file_ops.move(paths, dest, resolver=resolver)
-        except OSError as e:
-            QMessageBox.critical(self, _("dlg_drop_fail"), str(e))
+        """D&D: 既定は移動、Ctrl押下でコピー。どちらも Undo 可（非同期実行）。"""
+        if self._copy_thread is not None:
+            self.statusBar().showMessage(_("copy_busy"), 4000)
             return
-        verb = _("kind_copy" if copy else "kind_move")
-        self.statusBar().showMessage(
-            _("moved_n").format(
-                n=len(paths), dest=Path(dest).name or dest, verb=verb), 5000)
+        from app.gui.conflict_dialog import make_resolver
+        from app.engine.file_ops import build_plan
+        resolver = make_resolver(self)
+        if copy:
+            # 同フォルダへのコピーは「複製」なので衝突ダイアログを出さず自動で
+            # (2) 付きの名前にする。別フォルダは従来の衝突解決。
+            dest_norm = str(Path(dest))
+            same = [p for p in paths if str(Path(p).parent) == dest_norm]
+            cross = [p for p in paths if str(Path(p).parent) != dest_norm]
+            plan = (build_plan(same, dest, None) or [])
+            cross_plan = build_plan(cross, dest, resolver)
+            if cross_plan is None:  # cross 側で中止
+                return
+            plan += cross_plan
+        else:
+            plan = build_plan(paths, dest, resolver)
+            if plan is None:
+                return
+        self._start_copy_operation(plan, "copy" if copy else "move")
+
+    # ---- 非同期コピー/移動（進捗バー付き） ----
+    def _start_copy_operation(self, plan: list, kind: str,
+                              clear_clipboard: bool = False) -> None:
+        """build_plan の計画をワーカースレッドで実行し、下部に進捗を表示する。"""
+        if not plan:
+            return
+        if self._copy_thread is not None:
+            self.statusBar().showMessage(_("copy_busy"), 4000)
+            return
+        from app.engine.file_ops import total_size
+        from app.gui.copy_worker import CopyWorker
+        total = total_size([item.src for item in plan])
+
+        self._copy_kind = kind
+        self._copy_clear_clipboard = clear_clipboard
+        self._copy_cancelled = False
+
+        worker = CopyWorker(self.file_ops, plan, kind, total)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._update_progress)
+        worker.finished.connect(self._on_copy_finished)
+        self._copy_worker = worker
+        self._copy_thread = thread
+        thread.start()
+        # 一瞬で終わる操作のちらつきを避け、200ms 後にまだ実行中なら表示する。
+        QTimer.singleShot(200, self._maybe_show_progress)
+
+    def _maybe_show_progress(self) -> None:
+        if self._copy_worker is not None:  # まだ実行中
+            self.progress_label.show()
+            self.progress_bar.show()
+            self.cancel_btn.show()
+
+    def _update_progress(self, done: int, total: int, name: str) -> None:
+        if self._copy_worker is None:
+            return
+        if total > 0:
+            self.progress_bar.setRange(0, 1000)
+            self.progress_bar.setValue(min(1000, int(done / total * 1000)))
+            self.progress_bar.setFormat("%p%")
+        else:
+            self.progress_bar.setRange(0, 0)  # 不定（同一ドライブ移動など）
+        key = "move_progress" if self._copy_kind == "move" else "copy_progress"
+        self.progress_label.setText(_(key).format(name=name))
+
+    def _cancel_copy_operation(self) -> None:
+        if self._copy_worker is not None:
+            self._copy_cancelled = True
+            self._copy_worker.cancel()
+
+    def _on_copy_finished(self, record, error) -> None:
+        thread = self._copy_thread
+        if thread is not None:
+            thread.quit()
+            thread.wait(3000)
+            thread.deleteLater()
+        self._copy_thread = None
+        self._copy_worker = None  # 参照を落として GC に任せる
+        self.progress_label.hide()
+        self.progress_bar.hide()
+        self.cancel_btn.hide()
+
+        if record is not None and record.pairs:
+            self.file_ops.add_record(record)
+            if self._copy_clear_clipboard:
+                from app import clipboard_files
+                clipboard_files.clear()
+                self._clipboard = None
+        self.refresh()
+
+        if error:
+            QMessageBox.critical(self, _("dlg_paste_fail"), str(error))
+            return
+        if self._copy_cancelled:
+            self.statusBar().showMessage(_("copy_cancelled"), 4000)
+        else:
+            verb = _("kind_move" if self._copy_kind == "move"
+                     else "kind_copy")
+            n = len(record.pairs) if record is not None else 0
+            self.statusBar().showMessage(
+                _("copy_done").format(n=n, verb=verb), 4000)
 
     def _on_native_drop(self, paths: list, dest: str, gx: int, gy: int) -> None:
         """右ドラッグ: Windows ネイティブの「ここに解凍/コピー/移動…」を表示。

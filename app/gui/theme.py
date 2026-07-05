@@ -354,6 +354,39 @@ QLabel#statusLabel {{
     color: {t['text_sub']};
 }}
 
+/* ---- コピー/移動の進捗バー（pathBox と同じ角丸・枠でデザイン統一） ---- */
+QProgressBar#copyProgress {{
+    background: {t['surface']};
+    border: 1px solid {t['border']};
+    border-radius: 7px;
+    min-height: 14px;
+    max-height: 14px;
+    text-align: center;
+    color: {t['text_sub']};
+    font-size: 10px;
+}}
+
+QProgressBar#copyProgress::chunk {{
+    background: {t['accent']};
+    border-radius: 6px;
+    margin: 1px;
+}}
+
+/* ---- 進捗の中止ボタン（タブ閉じる ✕ と同系。hover で警告色） ---- */
+QToolButton#copyCancel {{
+    color: {t['text_hint']};
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    padding: 0px 4px;
+    font-size: 12px;
+}}
+
+QToolButton#copyCancel:hover {{
+    color: {t['status_error']};
+    background: {t['hover_bg']};
+}}
+
 /* ---- タブ閉じるボタン（カスタム QToolButton） ---- */
 QToolButton#tabClose {{
     color: {t['text_hint']};

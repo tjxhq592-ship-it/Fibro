@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from app.gui.icons import material_icon
 from app.i18n import _
 from app.models.favorite import FavoriteStore
 
@@ -26,16 +27,18 @@ class _ReachJob(QRunnable):
     ため、GUI スレッドではなくここで確認し、結果を emit(gen, id, ok) で返す。
     """
 
-    def __init__(self, leaves: list[tuple[str, str]], gen: int, emit) -> None:
+    def __init__(self, leaves: list[tuple[str, str, bool]], gen: int,
+                 emit) -> None:
         super().__init__()
-        self._leaves = leaves  # (fav_id, path)
+        self._leaves = leaves  # (fav_id, path, is_file)
         self._gen = gen
         self._emit = emit
 
     def run(self) -> None:
         from app.netpath import reachable
-        for fid, path in self._leaves:
-            self._emit(self._gen, fid, reachable(path))
+        for fid, path, is_file in self._leaves:
+            self._emit(self._gen, fid,
+                       reachable(path, require_dir=not is_file))
 
 
 class _FavTree(QTreeWidget):
@@ -47,6 +50,16 @@ class _FavTree(QTreeWidget):
 
     dropped = Signal()
     urls_dropped = Signal(list, object)  # paths, ドロップ先 item（group or None）
+    rename_requested = Signal()          # F2: 現在の項目のリネーム要求
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 — Qt API
+        """F2 で選択中のお気に入りをリネーム（項目はインライン編集不可のため自前で処理）。"""
+        if (event.key() == Qt.Key.Key_F2
+                and self.currentItem() is not None):
+            self.rename_requested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def dragEnterEvent(self, event) -> None:  # noqa: N802 — Qt API
         if event.mimeData().hasUrls():
@@ -74,7 +87,8 @@ class _FavTree(QTreeWidget):
 
 
 class FavoritesSidebar(QWidget):
-    path_selected = Signal(str)
+    path_selected = Signal(str)              # フォルダのお気に入り → フォルダへ移動
+    file_activated = Signal(str)             # ファイルのお気に入り → 既定アプリで開く
     _reach_checked = Signal(int, str, bool)  # gen, fav_id, reachable
 
     def __init__(self, store: FavoriteStore, parent=None) -> None:
@@ -94,6 +108,8 @@ class FavoritesSidebar(QWidget):
         self.tree.dropped.connect(self._persist_structure)
         self.tree.urls_dropped.connect(self._on_urls_dropped)
         self.tree.itemClicked.connect(self._on_clicked)
+        self.tree.itemDoubleClicked.connect(self._on_double_clicked)
+        self.tree.rename_requested.connect(self._rename_current)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._show_menu)
         layout.addWidget(self.tree, stretch=1)
@@ -112,17 +128,30 @@ class FavoritesSidebar(QWidget):
         """後方互換: 旧 API で list.count() などを参照するテスト向け。"""
         return self.tree
 
+    @staticmethod
+    def _is_dark() -> bool:
+        """QApplication のパレットからダークテーマかどうかを判定する。"""
+        from PySide6.QtGui import QPalette
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app is None:
+            return True
+        return app.palette().color(QPalette.ColorRole.Window).lightness() < 128
+
     def _label_for(self, fav) -> str:
         # 到達性は同期で見ない（GUI を固めるため）。後から非同期で印を付ける。
+        # アイコンは item.setIcon() で付与するため、ラベルには含めない。
         if fav.is_group:
-            return f"📁 {fav.label}"
-        label = f"⭐ {fav.label}"
+            return fav.label
+        label = fav.label
         if fav.tags:
             label += f"  [{', '.join(fav.tags)}]"
         return label
 
     def _make_item(self, fav) -> QTreeWidgetItem:
         item = QTreeWidgetItem([self._label_for(fav)])
+        icon_name = "folder_special" if fav.is_group else "star"
+        item.setIcon(0, material_icon(icon_name, dark=self._is_dark()))
         item.setData(0, _ID_ROLE, fav.id)
         tooltip = fav.path or fav.label
         if fav.note:
@@ -166,7 +195,7 @@ class FavoritesSidebar(QWidget):
             pending = still
         self.tree.expandAll()
         # 到達性チェックはバックグラウンドで（切断パスでも GUI を固めない）
-        leaves = [(f.id, f.path) for f in self._store.favorites
+        leaves = [(f.id, f.path, f.is_file) for f in self._store.favorites
                   if not f.is_group and f.path]
         if leaves:
             QThreadPool.globalInstance().start(
@@ -193,7 +222,7 @@ class FavoritesSidebar(QWidget):
 
     def _recheck_reachability(self) -> None:
         """現在のお気に入りの到達性を再確認（定期実行）。回復で印が消える。"""
-        leaves = [(f.id, f.path) for f in self._store.favorites
+        leaves = [(f.id, f.path, f.is_file) for f in self._store.favorites
                   if not f.is_group and f.path]
         if not leaves:
             return
@@ -215,7 +244,8 @@ class FavoritesSidebar(QWidget):
             return
         # 選択中のグループがあればその配下に追加
         parent_id = self._selected_group_id()
-        self._store.add(label.strip(), path, parent_id=parent_id)
+        self._store.add(label.strip(), path, parent_id=parent_id,
+                        is_file=P(path).is_file())
         self.refresh()
 
     def _on_urls_dropped(self, paths: list[str], target) -> None:
@@ -235,7 +265,8 @@ class FavoritesSidebar(QWidget):
         for path in paths:
             if not path or self._store.find_by_path(path):
                 continue
-            self._store.add(P(path).name or path, path, parent_id=parent_id)
+            self._store.add(P(path).name or path, path, parent_id=parent_id,
+                            is_file=P(path).is_file())
             added += 1
         if added:
             self.refresh()
@@ -295,13 +326,30 @@ class FavoritesSidebar(QWidget):
         if fav.is_group:
             item.setExpanded(not item.isExpanded())
             return
+        # フォルダは単クリックで移動。ファイルはダブルクリックで開く（ここでは何もしない）。
+        if not fav.is_file:
+            self._activate(fav, as_file=False)
+
+    def _on_double_clicked(self, item: QTreeWidgetItem, _col: int = 0) -> None:
+        fav = self._fav_for_item(item)
+        if not fav or fav.is_group:
+            return
+        # ファイルはダブルクリックで既定アプリで開く（フォルダは単クリックで処理済み）。
+        if fav.is_file:
+            self._activate(fav, as_file=True)
+
+    def _activate(self, fav, *, as_file: bool) -> None:
+        """到達性を確認したうえで、ファイルは開く／フォルダは移動を要求する。"""
         if not fav.is_reachable():
             QMessageBox.warning(
                 self, _("fav_unreachable_title"),
                 _("fav_unreachable_msg").format(path=fav.path))
             self.refresh()
             return
-        self.path_selected.emit(fav.path)
+        if as_file:
+            self.file_activated.emit(fav.path)
+        else:
+            self.path_selected.emit(fav.path)
 
     def _show_menu(self, pos) -> None:
         item = self.tree.itemAt(pos)
@@ -321,7 +369,8 @@ class FavoritesSidebar(QWidget):
             menu.addSeparator()
             menu.addAction(_("fav_ctx_remove_group"), lambda: self._remove(fav))
         else:
-            menu.addAction(_("ctx_open"), lambda: self._on_clicked(item))
+            menu.addAction(_("ctx_open"),
+                           lambda: self._activate(fav, as_file=fav.is_file))
             menu.addAction(_("fav_ctx_rename"), lambda: self._rename(fav))
             menu.addAction(_("fav_ctx_edit_note"), lambda: self._edit_note(fav))
             menu.addSeparator()
@@ -329,6 +378,15 @@ class FavoritesSidebar(QWidget):
         menu.addSeparator()
         menu.addAction(_("fav_ctx_new_group"), lambda: self._add_group(""))
         menu.exec(self.tree.viewport().mapToGlobal(pos))
+
+    def _rename_current(self) -> None:
+        """F2 ハンドラ: 現在選択中の項目（グループ/葉どちらも）をリネーム。"""
+        item = self.tree.currentItem()
+        if item is None:
+            return
+        fav = self._fav_for_item(item)
+        if fav is not None:
+            self._rename(fav)
 
     def _rename(self, fav) -> None:
         label, ok = QInputDialog.getText(

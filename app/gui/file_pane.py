@@ -87,6 +87,23 @@ class CurrentDirFilterProxy(QSortFilterProxyModel):
             return _(_COLUMN_KEYS[section])
         return super().headerData(section, orientation, role)
 
+    def data(self, index: QModelIndex, role=Qt.ItemDataRole.DisplayRole):  # noqa: N802
+        """0列目のアイコンは遅延プロバイダの生キャッシュから直接返す。
+
+        QFileSystemModel は gatherer が取得した時点のアイコンを内部キャッシュし、
+        後から再問い合わせしない。そのため拡張子別アイコンを遅延解決しても、
+        モデル経由（既定 data）では汎用アイコンのまま固定されてしまう。
+        ここで DecorationRole を横取りし、解決済みなら実アイコン・未解決なら
+        汎用＋解決スケジュールを返す。ビューは再描画のたびに data() を引くので、
+        provider.ready→viewport.update() で解決後のアイコンへ差し替わる。
+        """
+        if (role == Qt.ItemDataRole.DecorationRole
+                and index.isValid() and index.column() == 0):
+            src = self.mapToSource(index)
+            info = self.sourceModel().fileInfo(src)
+            return shared_icon_provider().icon(info)
+        return super().data(index, role)
+
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:  # noqa: N802
         """サイズ・更新日時は表示文字列でなく実値で比較する。
 

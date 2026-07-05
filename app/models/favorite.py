@@ -22,16 +22,19 @@ class Favorite:
     # 階層化: parent_id が空ならトップ階層。is_group はグループ（フォルダ）ノード。
     parent_id: str = ""
     is_group: bool = False
+    # 葉ノードが指すのがファイルなら True（フォルダなら False）。登録時に判定して保存。
+    is_file: bool = False
 
     def is_reachable(self) -> bool:
         """パス到達確認（到達不可ネットワークドライブはタイムアウトで False）。
 
         グループはパスを持たないため常に到達可能とみなす。
+        ファイル登録は存在確認、フォルダ登録はディレクトリ確認を行う。
         """
         if self.is_group:
             return True
         from app.netpath import reachable
-        return reachable(self.path)
+        return reachable(self.path, require_dir=not self.is_file)
 
 
 class FavoriteStore:
@@ -55,6 +58,7 @@ class FavoriteStore:
                     note=item.get("note", ""),
                     parent_id=item.get("parent_id", ""),
                     is_group=bool(item.get("is_group", False)),
+                    is_file=bool(item.get("is_file", False)),
                 )
                 for item in data.get("favorites", [])
             ]
@@ -68,9 +72,10 @@ class FavoriteStore:
             self._path, json.dumps(data, ensure_ascii=False, indent=2))
 
     def add(self, label: str, path: str, tags: list[str] | None = None,
-            note: str = "", parent_id: str = "") -> Favorite:
+            note: str = "", parent_id: str = "",
+            is_file: bool = False) -> Favorite:
         fav = Favorite(label=label, path=path, tags=tags or [], note=note,
-                       parent_id=parent_id)
+                       parent_id=parent_id, is_file=is_file)
         self.favorites.append(fav)
         self.save()
         return fav
