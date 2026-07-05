@@ -9,3 +9,6 @@ dist/
 build/
 *.spec
 packaging/Assets/
+
+# 調査用に生成した Excel フィクスチャ（生成器のみ commit。バイナリは除外）
+tests/fixtures/*.xlsx
