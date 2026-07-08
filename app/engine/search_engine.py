@@ -13,7 +13,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
-from app.engine.excel_reader import search_in_excel, search_in_xls
+from app.engine.excel_reader import (
+    ExcelReadError, search_in_excel, search_in_xls,
+)
 from app.engine.text_reader import is_binary, search_in_text
 
 # テキスト検索の既定ホワイトリスト
@@ -63,7 +65,14 @@ class SearchHit:
 @dataclass
 class SearchStats:
     scanned: int = 0
-    skipped: int = 0     # サイズ超過・バイナリ・アクセス不可
+    skipped_size: int = 0        # max_file_size 超過
+    skipped_read_error: int = 0  # 開けない（破損・暗号化・アクセス不可）
+    skipped_binary: int = 0      # テキストモードのバイナリ判定
+
+    @property
+    def skipped(self) -> int:
+        """理由別カウンタの合計（後方互換用）。"""
+        return self.skipped_size + self.skipped_read_error + self.skipped_binary
 
 
 def _iter_files(root: str, recursive: bool,
@@ -122,10 +131,10 @@ def search(root: str | Path, options: SearchOptions,
             continue
         try:
             if entry.stat().st_size > options.max_file_size:
-                stats.skipped += 1
+                stats.skipped_size += 1
                 continue
         except OSError:
-            stats.skipped += 1
+            stats.skipped_read_error += 1
             continue
 
         if SearchMode.TEXT in options.modes:
@@ -133,7 +142,7 @@ def search(root: str | Path, options: SearchOptions,
                        else DEFAULT_TEXT_EXTS)
             if ext in allowed:
                 if is_binary(entry.path):
-                    stats.skipped += 1
+                    stats.skipped_binary += 1
                 else:
                     for lineno, line in search_in_text(
                             entry.path, keyword, options.case_sensitive):
@@ -144,9 +153,14 @@ def search(root: str | Path, options: SearchOptions,
 
         if SearchMode.EXCEL in options.modes and ext in EXCEL_EXTS:
             reader = search_in_xls if ext == ".xls" else search_in_excel
-            for sheet, address, value in reader(
-                    entry.path, keyword, options.case_sensitive):
-                if cancel.is_set():
-                    return
-                yield SearchHit(entry.path, SearchMode.EXCEL,
-                                f"{sheet}!{address}: {value.strip()}")
+            # ジェネレータの ExcelReadError はイテレーション開始時に届く
+            # ため、for 文ごと try で囲む
+            try:
+                for sheet, address, value in reader(
+                        entry.path, keyword, options.case_sensitive):
+                    if cancel.is_set():
+                        return
+                    yield SearchHit(entry.path, SearchMode.EXCEL,
+                                    f"{sheet}!{address}: {value.strip()}")
+            except ExcelReadError:
+                stats.skipped_read_error += 1

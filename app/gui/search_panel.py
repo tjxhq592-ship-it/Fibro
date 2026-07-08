@@ -34,7 +34,7 @@ class SearchWorker(QThread):
     hit = Signal(object)        # SearchHit（後方互換のため残す、現在未使用）
     hits_batch = Signal(list)   # 500件まとめて送信（大量ヒット対策）
     status = Signal(str)        # 進捗メッセージ
-    finished_ok = Signal(int, int)  # scanned, skipped
+    finished_ok = Signal(object)  # SearchStats（理由別スキップ内訳を含む）
 
     def __init__(self, root: str, options: SearchOptions,
                  use_index: bool = False, parent=None) -> None:
@@ -66,7 +66,7 @@ class SearchWorker(QThread):
                 buf = []
         if buf:
             self.hits_batch.emit(buf)
-        self.finished_ok.emit(stats.scanned, stats.skipped)
+        self.finished_ok.emit(stats)
 
     def _run_indexed(self) -> None:
         """FTS5 インデックスでファイル名検索（必要なら構築してから照会）。"""
@@ -79,14 +79,14 @@ class SearchWorker(QThread):
                 self.status.emit(_("search_building"))
                 count = index.build(self._root, cancel=self._cancel)
                 if count < 0:  # キャンセル
-                    self.finished_ok.emit(0, 0)
+                    self.finished_ok.emit(SearchStats())
                     return
             elif time.time() - built_at > INDEX_MAX_AGE_SEC:
                 # 期限切れは全再構築せず差分更新（書込量を抑える）
                 self.status.emit(_("search_updating"))
                 count = index.update(self._root, cancel=self._cancel)
                 if count < 0:  # キャンセル
-                    self.finished_ok.emit(0, 0)
+                    self.finished_ok.emit(SearchStats())
                     return
             buf = []
             for path in index.query(self._root, self._options.keyword):
@@ -98,7 +98,7 @@ class SearchWorker(QThread):
                     buf = []
             if buf:
                 self.hits_batch.emit(buf)
-            self.finished_ok.emit(max(count, 0), 0)
+            self.finished_ok.emit(SearchStats(scanned=max(count, 0)))
         finally:
             index.close()
 
@@ -302,22 +302,40 @@ class SearchPanel(QWidget):
             self.status_label.setText(
                 _("search_running_n").format(n=self.results.count()))
 
-    def _on_finished(self, scanned: int, skipped: int) -> None:
+    @staticmethod
+    def _skip_detail(stats: SearchStats) -> str:
+        """スキップ内訳の文字列（0 件の理由は省略）。"""
+        parts = []
+        if stats.skipped_size:
+            parts.append(_("search_skip_size").format(n=stats.skipped_size))
+        if stats.skipped_read_error:
+            parts.append(_("search_skip_read").format(
+                n=stats.skipped_read_error))
+        if stats.skipped_binary:
+            parts.append(_("search_skip_binary").format(
+                n=stats.skipped_binary))
+        return _("search_skip_sep").join(parts)
+
+    def _on_finished(self, stats: SearchStats) -> None:
         self._flush_hits()
         self._flush_timer.stop()
         self.search_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
+        scanned = stats.scanned
+        skipped = stats.skipped
         if self._capped:
             if skipped:
                 text = _("search_cap_done_skip").format(
                     total=self._total_hits, max=MAX_RESULTS,
-                    scanned=scanned, skipped=skipped)
+                    scanned=scanned, skipped=skipped,
+                    detail=self._skip_detail(stats))
             else:
                 text = _("search_cap_done").format(
                     total=self._total_hits, max=MAX_RESULTS, scanned=scanned)
         elif skipped:
             text = _("search_done_skip").format(
-                n=self.results.count(), scanned=scanned, skipped=skipped)
+                n=self.results.count(), scanned=scanned, skipped=skipped,
+                detail=self._skip_detail(stats))
         else:
             text = _("search_done_n").format(
                 n=self.results.count(), scanned=scanned)

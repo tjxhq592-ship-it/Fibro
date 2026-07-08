@@ -43,6 +43,15 @@ _NUMERIC_RE = re.compile(r"^[\d.,\-+eE]+$")
 _TAG_RE = re.compile(rb"<[^>]+>")
 
 
+class ExcelReadError(Exception):
+    """ブックを開けなかった（破損・暗号化・オンライン専用等）。
+
+    silent skip せず呼び出し側に通知し、skipped 統計に計上させるための例外。
+    ジェネレータから送出されるため、呼び出し側はイテレーション開始時
+    （for 文）にも捕捉できるよう try で囲むこと。
+    """
+
+
 def may_contain_keyword(filepath: str | Path, keyword: str) -> bool:
     """sharedStrings.xml の高速プレフィルタ。
 
@@ -85,6 +94,7 @@ def search_in_excel(filepath: str | Path, keyword: str,
     """全シートを走査し (シート名, セル番地, セル値) を逐次返す。
 
     read_only モードで開くため大きなブックでもメモリを食わない。
+    開けないブックは ExcelReadError を送出する（呼び出し側で skipped 計上）。
     """
     needle = keyword if case_sensitive else keyword.lower()
     if not may_contain_keyword(filepath, keyword):
@@ -93,8 +103,8 @@ def search_in_excel(filepath: str | Path, keyword: str,
     try:
         wb = openpyxl.load_workbook(str(filepath), read_only=True,
                                     data_only=True)
-    except Exception:  # 破損ブック・暗号化等は対象外としてスキップ
-        return
+    except Exception as e:  # 破損ブック・暗号化等
+        raise ExcelReadError(f"cannot open workbook: {filepath}") from e
     hits = 0
     try:
         for ws in wb.worksheets:
@@ -133,13 +143,16 @@ def _xls_cell_text(cell) -> str | None:
 def search_in_xls(filepath: str | Path, keyword: str,
                   case_sensitive: bool = False,
                   max_hits: int = 100) -> Iterator[tuple[str, str, str]]:
-    """.xls（旧形式）のセル値検索。xlrd 使用。"""
+    """.xls（旧形式）のセル値検索。xlrd 使用。
+
+    開けないブックは ExcelReadError を送出する（呼び出し側で skipped 計上）。
+    """
     needle = keyword if case_sensitive else keyword.lower()
     xlrd, get_column_letter = _load_xlrd()
     try:
         book = xlrd.open_workbook(str(filepath), on_demand=True)
-    except Exception:  # 破損・暗号化・非xlsはスキップ
-        return
+    except Exception as e:  # 破損・暗号化・非xls
+        raise ExcelReadError(f"cannot open workbook: {filepath}") from e
     hits = 0
     try:
         for sheet in book.sheets():

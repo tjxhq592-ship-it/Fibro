@@ -47,6 +47,23 @@ def test_search_panel_streams_results(qapp, tmp_path):
     panel.cancel_search()
 
 
+def test_search_skip_breakdown_shown(qapp, tmp_path):
+    """開けない .xlsx が skipped 内訳（読込失敗）として完了メッセージに出る。"""
+    (tmp_path / "broken.xlsx").write_bytes(b"not a zip")
+    panel = SearchPanel()
+    panel.set_root(str(tmp_path))
+    panel.keyword_edit.setText("anything")
+    panel.mode_filename.setChecked(False)
+    panel.mode_excel.setChecked(True)
+    panel.start_search()
+
+    assert _wait_for(lambda: panel.search_btn.isEnabled())  # 完了待ち
+    status = panel.status_label.text()
+    assert "1件スキップ" in status
+    assert "読込失敗1" in status  # 理由別内訳（ja 既定）
+    panel.cancel_search()
+
+
 def test_search_panel_cancel(qapp, tmp_path):
     (tmp_path / "a.txt").write_text("x")
     panel = SearchPanel()
