@@ -216,3 +216,18 @@ OneDrive オンライン専用などを**無言で 0 件**にする。さらに 
 「あるべき挙動」への**反転テスト**として流用する想定（ファイル docstring に明記）。
 フィクスチャは `tmp_path` に生成し、バイナリはリポジトリに commit しない
 （生成器のみ commit・`tests/fixtures/*.xlsx` は gitignore）。
+
+---
+
+## 6. 対応状況（2026-07-08 実装フェーズ完了）
+
+検証テスト: `tests/test_excel_search_fixes.py`（調査テストは反転・整理のうえ削除）
+
+| 仮説 | 対応 | コミット / 備考 |
+|---|---|---|
+| H1 エンティティ未デコード | ✅ 修正 | `fix: プレフィルタで XML エンティティ/NCR をデコードして照合 (F1)` — `html.unescape` 適用。NCR（`&#37096;` / `&#x9928;`）も解決 |
+| H2 表示書式の不一致 | 📝 仕様として明記 | `feat: Excel 検索が内部値対象である旨をツールチップに明記 (F4)` — 照合ロジックは変更せず、Excel モードのツールチップ（ja/en）で注記 |
+| H3 dimension 過信 | ✅ 修正 | `fix: read_only 走査前に reset_dimensions を常時適用 (F2)` |
+| H4 数式キャッシュ無し | 📝 現状維持（仕様） | 実装対応なし。`TestSpecH4FormulaNoCache` で仕様制限として固定 |
+| H5 silent skip | ✅ 修正 | `fix: 開けないブックの silent skip を廃止し skipped を理由別に計上・表示 (F3)` — `ExcelReadError` 送出 + `skipped_read_error` 計上 |
+| H6 スキップ理由の不可視 | ✅ 修正 | 同上 (F3) — `SearchStats` を理由別カウンタに分離し、UI 完了メッセージに内訳（サイズ超過・読込失敗・バイナリ）を表示 |
