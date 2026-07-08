@@ -6,7 +6,7 @@ import pytest
 import xlwt
 
 from app.engine.excel_reader import (
-    ExcelReadError, may_contain_keyword, search_in_excel, search_in_xls,
+    ContentReadError, may_contain_keyword, search_in_excel, search_in_xls,
 )
 from app.engine.index_engine import SearchIndex
 from app.engine.search_engine import SearchMode, SearchOptions, search
@@ -139,11 +139,11 @@ class TestXlsSearch:
         assert hits == [("古いシート", "A1", "99")]
 
     def test_corrupt_raises(self, tmp_path):
-        # silent skip 廃止: 開けないブックは ExcelReadError を送出し、
+        # silent skip 廃止: 開けないブックは ContentReadError を送出し、
         # エンジン側で skipped_read_error に計上される
         bad = tmp_path / "bad.xls"
         bad.write_bytes(b"not an xls")
-        with pytest.raises(ExcelReadError):
+        with pytest.raises(ContentReadError):
             list(search_in_xls(bad, "x"))
 
     def test_engine_routes_xls(self, xls, tmp_path):

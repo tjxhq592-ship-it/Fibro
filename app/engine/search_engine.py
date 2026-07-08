@@ -1,7 +1,8 @@
 """検索エンジン（GUI非依存・ジェネレータでストリーミング・キャンセル可能）。
 
-os.scandir で再帰走査し、ファイル名 → テキスト内容 → Excelセル値 の
-モードで一致を逐次 yield する。threading.Event でいつでも中断できる。
+os.scandir で再帰走査し、ファイル名 → テキスト内容 → Excelセル値 →
+文書内容（Word/PowerPoint/PDF）のモードで一致を逐次 yield する。
+threading.Event でいつでも中断できる。
 """
 from __future__ import annotations
 
@@ -13,9 +14,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
-from app.engine.excel_reader import (
-    ExcelReadError, search_in_excel, search_in_xls,
-)
+from app.engine.errors import ContentReadError
+from app.engine.excel_reader import search_in_excel, search_in_xls
+from app.engine.office_reader import search_in_docx, search_in_pptx
+from app.engine.pdf_reader import search_in_pdf
 from app.engine.text_reader import is_binary, search_in_text
 
 # テキスト検索の既定ホワイトリスト
@@ -25,6 +27,8 @@ DEFAULT_TEXT_EXTS = {
     ".bat", ".ps1", ".sh", ".sql",
 }
 EXCEL_EXTS = {".xlsx", ".xlsm", ".xls"}
+# 文書内容検索（Word/PowerPoint はマクロ有効形式も対象）
+DOC_EXTS = {".docx", ".docm", ".pptx", ".pptm", ".pdf"}
 DEFAULT_MAX_SIZE = 50 * 1024 * 1024  # 50MB
 
 
@@ -32,6 +36,7 @@ class SearchMode(Enum):
     FILENAME = "filename"
     TEXT = "text"
     EXCEL = "excel"
+    DOCUMENT = "document"
 
 
 def is_wildcard(keyword: str) -> bool:
@@ -126,7 +131,8 @@ def search(root: str | Path, options: SearchOptions,
             if matched:
                 yield SearchHit(entry.path, SearchMode.FILENAME)
 
-        content_modes = options.modes & {SearchMode.TEXT, SearchMode.EXCEL}
+        content_modes = options.modes & {
+            SearchMode.TEXT, SearchMode.EXCEL, SearchMode.DOCUMENT}
         if not content_modes:
             continue
         try:
@@ -153,7 +159,7 @@ def search(root: str | Path, options: SearchOptions,
 
         if SearchMode.EXCEL in options.modes and ext in EXCEL_EXTS:
             reader = search_in_xls if ext == ".xls" else search_in_excel
-            # ジェネレータの ExcelReadError はイテレーション開始時に届く
+            # ジェネレータの ContentReadError はイテレーション開始時に届く
             # ため、for 文ごと try で囲む
             try:
                 for sheet, address, value in reader(
@@ -162,5 +168,22 @@ def search(root: str | Path, options: SearchOptions,
                         return
                     yield SearchHit(entry.path, SearchMode.EXCEL,
                                     f"{sheet}!{address}: {value.strip()}")
-            except ExcelReadError:
+            except ContentReadError:
+                stats.skipped_read_error += 1
+
+        if SearchMode.DOCUMENT in options.modes and ext in DOC_EXTS:
+            if ext == ".pdf":
+                doc_reader = search_in_pdf
+            elif ext in (".docx", ".docm"):
+                doc_reader = search_in_docx
+            else:
+                doc_reader = search_in_pptx
+            try:
+                for label, snippet in doc_reader(
+                        entry.path, keyword, options.case_sensitive):
+                    if cancel.is_set():
+                        return
+                    yield SearchHit(entry.path, SearchMode.DOCUMENT,
+                                    f"{label}: {snippet.strip()}")
+            except ContentReadError:
                 stats.skipped_read_error += 1

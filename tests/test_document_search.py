@@ -22,6 +22,9 @@ from app.engine.office_reader import (  # noqa: E402
     search_in_docx, search_in_pptx,
 )
 from app.engine.pdf_reader import search_in_pdf  # noqa: E402
+from app.engine.search_engine import (  # noqa: E402
+    SearchMode, SearchOptions, SearchStats, search,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -174,3 +177,76 @@ class TestPdf:
         assert label == "ページ 1"
         assert "NEEDLE" in snippet
         assert len(snippet) <= 220  # 前後合計200文字程度
+
+
+# ---------------------------------------------------------------------------
+# D3: エンジン統合（SearchMode.DOCUMENT）
+# ---------------------------------------------------------------------------
+class TestEngineIntegration:
+    @pytest.fixture()
+    def mixed_dir(self, tmp_path):
+        """txt / xlsx / docx / pptx / pdf が混在するディレクトリ。"""
+        import openpyxl
+        d = tmp_path / "tree"
+        d.mkdir()
+        (d / "note.txt").write_text("plain COMMON text", encoding="utf-8")
+        wb = openpyxl.Workbook()
+        wb.active["A1"] = "cell COMMON value"
+        wb.save(d / "book.xlsx")
+        gen.make_docx(d, ["doc COMMON para"], name="doc.docx")
+        gen.make_pptx(d, {1: ["slide COMMON text"]}, name="deck.pptx")
+        gen.make_pdf(d, ["pdf COMMON page"], name="doc.pdf")
+        return d
+
+    def test_all_formats_hit_with_content_modes(self, mixed_dir):
+        opts = SearchOptions(
+            keyword="COMMON",
+            modes={SearchMode.TEXT, SearchMode.EXCEL, SearchMode.DOCUMENT})
+        hits = list(search(mixed_dir, opts))
+        by_ext = {Path(h.path).suffix: h for h in hits}
+        assert set(by_ext) == {".txt", ".xlsx", ".docx", ".pptx", ".pdf"}
+        assert by_ext[".docx"].kind == SearchMode.DOCUMENT
+        assert by_ext[".docx"].detail == "段落 1: doc COMMON para"
+        assert by_ext[".pptx"].detail == "スライド 1: slide COMMON text"
+        assert by_ext[".pdf"].detail == "ページ 1: pdf COMMON page"
+
+    def test_macro_extensions_dispatch(self, tmp_path):
+        # .docm / .pptm も同じリーダーで検索される
+        d = tmp_path / "tree"
+        d.mkdir()
+        gen.make_docx(d, ["macro doc TOKEN"], name="m.docm")
+        gen.make_pptx(d, {1: ["macro slide TOKEN"]}, name="m.pptm")
+        opts = SearchOptions(keyword="TOKEN", modes={SearchMode.DOCUMENT})
+        hits = list(search(d, opts))
+        assert {Path(h.path).suffix for h in hits} == {".docm", ".pptm"}
+
+    def test_read_errors_counted(self, tmp_path):
+        d = tmp_path / "tree"
+        d.mkdir()
+        gen.make_fake_docx(d)
+        gen.make_fake_pptx(d)
+        gen.make_broken_pdf(d)
+        opts = SearchOptions(keyword="anything",
+                             modes={SearchMode.DOCUMENT})
+        stats = SearchStats()
+        hits = list(search(d, opts, stats=stats))
+        assert hits == []
+        assert stats.skipped_read_error == 3
+        assert stats.skipped == 3
+
+    def test_max_file_size_applies(self, tmp_path):
+        d = tmp_path / "tree"
+        d.mkdir()
+        gen.make_docx(d, ["big TOKEN"], name="big.docx")
+        opts = SearchOptions(keyword="TOKEN", modes={SearchMode.DOCUMENT},
+                             max_file_size=10)
+        stats = SearchStats()
+        assert list(search(d, opts, stats=stats)) == []
+        assert stats.skipped_size == 1
+
+    def test_document_mode_ignores_other_extensions(self, mixed_dir):
+        # DOCUMENT のみ指定なら txt / xlsx はヒットしない
+        opts = SearchOptions(keyword="COMMON",
+                             modes={SearchMode.DOCUMENT})
+        exts = {Path(h.path).suffix for h in search(mixed_dir, opts)}
+        assert exts == {".docx", ".pptx", ".pdf"}

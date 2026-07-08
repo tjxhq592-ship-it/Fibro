@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
 import gen_excel_fixtures as gen  # noqa: E402
 
 from app.engine.excel_reader import (  # noqa: E402
-    ExcelReadError, may_contain_keyword, search_in_excel,
+    ContentReadError, may_contain_keyword, search_in_excel,
 )
 from app.engine.search_engine import (  # noqa: E402
     SearchMode, SearchOptions, SearchStats, search,
@@ -83,7 +83,7 @@ class TestF2BadDimension:
 
 
 # ---------------------------------------------------------------------------
-# F3 (H5): 開けないブックは silent skip せず ExcelReadError を送出し、
+# F3 (H5): 開けないブックは silent skip せず ContentReadError を送出し、
 #          エンジンが skipped_read_error に計上する
 # ---------------------------------------------------------------------------
 class TestF3ReadError:
@@ -92,7 +92,7 @@ class TestF3ReadError:
         # プレフィルタは BadZipFile を握りつぶし True（本走査に委ねる）
         assert may_contain_keyword(p, "x") is True
         # load_workbook 失敗は例外として呼び出し側に届く
-        with pytest.raises(ExcelReadError):
+        with pytest.raises(ContentReadError):
             _hits(p, "x")
 
     def test_engine_counts_read_error(self, fx, tmp_path):

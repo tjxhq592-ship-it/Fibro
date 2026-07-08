@@ -12,6 +12,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from app.engine._xmltext import xml_to_text
+from app.engine.errors import ContentReadError
 
 # openpyxl / xlrd は重い（起動時 ~200ms）ため、Excel を実際に検索する時だけ
 # 遅延ロードする（起動・Win+E の体感を速くする）。
@@ -41,15 +42,6 @@ def _load_xlrd():
 
 
 _NUMERIC_RE = re.compile(r"^[\d.,\-+eE]+$")
-
-
-class ExcelReadError(Exception):
-    """ブックを開けなかった（破損・暗号化・オンライン専用等）。
-
-    silent skip せず呼び出し側に通知し、skipped 統計に計上させるための例外。
-    ジェネレータから送出されるため、呼び出し側はイテレーション開始時
-    （for 文）にも捕捉できるよう try で囲むこと。
-    """
 
 
 def may_contain_keyword(filepath: str | Path, keyword: str) -> bool:
@@ -88,7 +80,7 @@ def search_in_excel(filepath: str | Path, keyword: str,
     """全シートを走査し (シート名, セル番地, セル値) を逐次返す。
 
     read_only モードで開くため大きなブックでもメモリを食わない。
-    開けないブックは ExcelReadError を送出する（呼び出し側で skipped 計上）。
+    開けないブックは ContentReadError を送出する（呼び出し側で skipped 計上）。
     """
     needle = keyword if case_sensitive else keyword.lower()
     if not may_contain_keyword(filepath, keyword):
@@ -98,7 +90,7 @@ def search_in_excel(filepath: str | Path, keyword: str,
         wb = openpyxl.load_workbook(str(filepath), read_only=True,
                                     data_only=True)
     except Exception as e:  # 破損ブック・暗号化等
-        raise ExcelReadError(f"cannot open workbook: {filepath}") from e
+        raise ContentReadError(f"cannot open workbook: {filepath}") from e
     hits = 0
     try:
         for ws in wb.worksheets:
@@ -139,14 +131,14 @@ def search_in_xls(filepath: str | Path, keyword: str,
                   max_hits: int = 100) -> Iterator[tuple[str, str, str]]:
     """.xls（旧形式）のセル値検索。xlrd 使用。
 
-    開けないブックは ExcelReadError を送出する（呼び出し側で skipped 計上）。
+    開けないブックは ContentReadError を送出する（呼び出し側で skipped 計上）。
     """
     needle = keyword if case_sensitive else keyword.lower()
     xlrd, get_column_letter = _load_xlrd()
     try:
         book = xlrd.open_workbook(str(filepath), on_demand=True)
     except Exception as e:  # 破損・暗号化・非xls
-        raise ExcelReadError(f"cannot open workbook: {filepath}") from e
+        raise ContentReadError(f"cannot open workbook: {filepath}") from e
     hits = 0
     try:
         for sheet in book.sheets():

@@ -7,7 +7,7 @@ from app.engine.search_engine import (
     SearchHit, SearchMode, SearchOptions, SearchStats, search,
 )
 from app.engine.text_reader import detect_encoding, is_binary, search_in_text
-from app.engine.excel_reader import ExcelReadError, search_in_excel
+from app.engine.excel_reader import ContentReadError, search_in_excel
 
 
 @pytest.fixture
@@ -55,11 +55,11 @@ class TestExcelReader:
         assert hits == [("Data", "C5", "order_id")]
 
     def test_corrupt_file_raises(self, tmp_path):
-        # silent skip 廃止: 開けないブックは ExcelReadError を送出し、
+        # silent skip 廃止: 開けないブックは ContentReadError を送出し、
         # エンジン側で skipped_read_error に計上される
         bad = tmp_path / "bad.xlsx"
         bad.write_bytes(b"not a zip")
-        with pytest.raises(ExcelReadError):
+        with pytest.raises(ContentReadError):
             list(search_in_excel(bad, "x"))
 
 
