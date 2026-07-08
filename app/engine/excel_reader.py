@@ -98,6 +98,11 @@ def search_in_excel(filepath: str | Path, keyword: str,
     hits = 0
     try:
         for ws in wb.worksheets:
+            # dimension 宣言が実データより狭いブック（一部の生成ツール・
+            # 手動編集）で範囲外セルを取りこぼさないよう、宣言を捨てて
+            # 実データから再計算させる。全行を舐める本走査では追加コストなし。
+            if hasattr(ws, "reset_dimensions"):
+                ws.reset_dimensions()
             for row_idx, row in enumerate(ws.iter_rows(values_only=True),
                                           start=1):
                 for col_idx, value in enumerate(row, start=1):
