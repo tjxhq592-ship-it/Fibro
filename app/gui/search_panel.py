@@ -162,6 +162,8 @@ class SearchPanel(QWidget):
         self.mode_filename.setChecked(True)
         self.mode_text = QCheckBox(_("search_text"))
         self.mode_excel = QCheckBox("Excel")
+        # 表示書式ではなく内部値を検索する仕様の注記（H2 対応）
+        self.mode_excel.setToolTip(_("search_excel_tip"))
         self.case_check = QCheckBox(_("search_case"))
         for w in (self.mode_filename, self.mode_text, self.mode_excel,
                   self.case_check):

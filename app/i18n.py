@@ -245,6 +245,8 @@ _STRINGS: dict[str, dict[str, str]] = {
                            "en": "Accelerates filename search with SQLite FTS5 index.\nAuto-rebuilt on first use and after 10 minutes.\n(Filename mode only; incompatible with wildcard/subfolder search)"},
     "search_partial_tip": {"ja": "部分一致で検索。* や ? を含めると *.md / file_?.txt などのパターン照合になります。",
                            "en": "Partial match search. Use * or ? for pattern matching (e.g. *.md / file_?.txt)."},
+    "search_excel_tip":   {"ja": "セルの内部値を検索します。日付は 2026-07-04 形式、％は 0.15、金額は桁区切りなし（1000）で入力してください。",
+                           "en": "Searches internal cell values. Enter dates as 2026-07-04, percentages as 0.15, and amounts without thousands separators (1000)."},
     "search_running":     {"ja": "検索中…",            "en": "Searching…"},
     "search_running_n":   {"ja": "検索中… {n}件",      "en": "Searching… {n} found"},
     "search_done_n":      {"ja": "{n}件ヒット （{scanned}ファイル走査）",
