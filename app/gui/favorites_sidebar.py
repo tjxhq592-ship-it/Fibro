@@ -96,6 +96,8 @@ class FavoritesSidebar(QWidget):
         self._store = store
         self._reach_gen = 0                 # 到達性チェックの世代
         self._items_by_id: dict[str, QTreeWidgetItem] = {}
+        # refresh() でのツリー再構築中は itemExpanded/itemCollapsed を無視する
+        self._restoring = False
         self._reach_checked.connect(self._apply_reachability)
 
         layout = QVBoxLayout(self)
@@ -109,6 +111,8 @@ class FavoritesSidebar(QWidget):
         self.tree.urls_dropped.connect(self._on_urls_dropped)
         self.tree.itemClicked.connect(self._on_clicked)
         self.tree.itemDoubleClicked.connect(self._on_double_clicked)
+        self.tree.itemExpanded.connect(self._on_item_expanded)
+        self.tree.itemCollapsed.connect(self._on_item_collapsed)
         self.tree.rename_requested.connect(self._rename_current)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._show_menu)
@@ -167,33 +171,39 @@ class FavoritesSidebar(QWidget):
         return item
 
     def refresh(self) -> None:
-        self.tree.clear()
-        self._reach_gen += 1
-        self._items_by_id = {}
-        # parent_id → 親 item のマップを構築しながら、保存順に追加
-        items: dict[str, QTreeWidgetItem] = {}
-        # 親が先に作られるよう、トポロジカルに数回パスする
-        pending = list(self._store.favorites)
-        guard = 0
-        while pending and guard < len(self._store.favorites) + 2:
-            guard += 1
-            still: list = []
-            for fav in pending:
-                if fav.parent_id and fav.parent_id not in items:
-                    # 親がまだ未作成なら次パスへ
-                    if any(p.id == fav.parent_id for p in self._store.favorites):
-                        still.append(fav)
-                        continue
-                    # 親が存在しない（孤児）→ トップ扱い
-                item = self._make_item(fav)
-                if fav.parent_id and fav.parent_id in items:
-                    items[fav.parent_id].addChild(item)
-                else:
-                    self.tree.addTopLevelItem(item)
-                items[fav.id] = item
-                self._items_by_id[fav.id] = item
-            pending = still
-        self.tree.expandAll()
+        self._restoring = True
+        try:
+            self.tree.clear()
+            self._reach_gen += 1
+            self._items_by_id = {}
+            # parent_id → 親 item のマップを構築しながら、保存順に追加
+            items: dict[str, QTreeWidgetItem] = {}
+            # 親が先に作られるよう、トポロジカルに数回パスする
+            pending = list(self._store.favorites)
+            guard = 0
+            while pending and guard < len(self._store.favorites) + 2:
+                guard += 1
+                still: list = []
+                for fav in pending:
+                    if fav.parent_id and fav.parent_id not in items:
+                        # 親がまだ未作成なら次パスへ
+                        if any(p.id == fav.parent_id for p in self._store.favorites):
+                            still.append(fav)
+                            continue
+                        # 親が存在しない（孤児）→ トップ扱い
+                    item = self._make_item(fav)
+                    if fav.parent_id and fav.parent_id in items:
+                        items[fav.parent_id].addChild(item)
+                    else:
+                        self.tree.addTopLevelItem(item)
+                    items[fav.id] = item
+                    self._items_by_id[fav.id] = item
+                    if fav.is_group:
+                        # 保存済み状態を復元（新規グループは expanded=True）
+                        item.setExpanded(fav.expanded)
+                pending = still
+        finally:
+            self._restoring = False
         # 到達性チェックはバックグラウンドで（切断パスでも GUI を固めない）
         leaves = [(f.id, f.path, f.is_file) for f in self._store.favorites
                   if not f.is_group and f.path]
@@ -329,6 +339,30 @@ class FavoritesSidebar(QWidget):
         # フォルダは単クリックで移動。ファイルはダブルクリックで開く（ここでは何もしない）。
         if not fav.is_file:
             self._activate(fav, as_file=False)
+
+    def _on_item_expanded(self, item: QTreeWidgetItem) -> None:
+        self._set_expanded_state(item, True)
+
+    def _on_item_collapsed(self, item: QTreeWidgetItem) -> None:
+        self._set_expanded_state(item, False)
+
+    def _set_expanded_state(self, item: QTreeWidgetItem,
+                            expanded: bool) -> None:
+        """ユーザー操作による展開・折りたたみを Favorite.expanded に保存する。
+
+        refresh() によるツリー再構築中（_restoring 中）は無視する。
+        再構築中の setExpanded() 呼び出しも itemExpanded/itemCollapsed を
+        発火させるため、ここで弾かないと無意味な保存が連発する。
+        """
+        if self._restoring:
+            return
+        fav = self._fav_for_item(item)
+        if fav is None or not fav.is_group:
+            return
+        if fav.expanded == expanded:
+            return
+        fav.expanded = expanded
+        self._store.save()
 
     def _on_double_clicked(self, item: QTreeWidgetItem, _col: int = 0) -> None:
         fav = self._fav_for_item(item)

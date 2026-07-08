@@ -24,6 +24,9 @@ class Favorite:
     is_group: bool = False
     # 葉ノードが指すのがファイルなら True（フォルダなら False）。登録時に判定して保存。
     is_file: bool = False
+    # グループの展開状態（葉ノードでは未使用）。デフォルト True により
+    # 新規グループは自動的に展開状態になる。
+    expanded: bool = True
 
     def is_reachable(self) -> bool:
         """パス到達確認（到達不可ネットワークドライブはタイムアウトで False）。
@@ -59,6 +62,8 @@ class FavoriteStore:
                     parent_id=item.get("parent_id", ""),
                     is_group=bool(item.get("is_group", False)),
                     is_file=bool(item.get("is_file", False)),
+                    # 旧形式（expanded キー無し）は True にフォールバック
+                    expanded=bool(item.get("expanded", True)),
                 )
                 for item in data.get("favorites", [])
             ]
