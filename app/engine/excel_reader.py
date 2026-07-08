@@ -6,11 +6,12 @@ zip 直読みして「文字列キーワードが存在しないブックを即�
 """
 from __future__ import annotations
 
-import html
 import re
 import zipfile
 from collections.abc import Iterator
 from pathlib import Path
+
+from app.engine._xmltext import xml_to_text
 
 # openpyxl / xlrd は重い（起動時 ~200ms）ため、Excel を実際に検索する時だけ
 # 遅延ロードする（起動・Win+E の体感を速くする）。
@@ -40,7 +41,6 @@ def _load_xlrd():
 
 
 _NUMERIC_RE = re.compile(r"^[\d.,\-+eE]+$")
-_TAG_RE = re.compile(rb"<[^>]+>")
 
 
 class ExcelReadError(Exception):
@@ -74,13 +74,7 @@ def may_contain_keyword(filepath: str | Path, keyword: str) -> bool:
                        or (n.startswith("xl/worksheets/")
                            and n.endswith(".xml"))]
             for name in targets:
-                data = zf.read(name)
-                text = _TAG_RE.sub(b"", data).decode(
-                    "utf-8", errors="replace")
-                if "&" in text:
-                    # エンティティ/NCR はどちらも必ず & を含む。
-                    # 含まないテキストは unescape 不要（高速パス）。
-                    text = html.unescape(text)
+                text = xml_to_text(zf.read(name))
                 if needle in text.lower():
                     return True
             return False

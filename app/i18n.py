@@ -248,6 +248,10 @@ _STRINGS: dict[str, dict[str, str]] = {
                            "en": "Partial match search. Use * or ? for pattern matching (e.g. *.md / file_?.txt)."},
     "search_excel_tip":   {"ja": "セルの内部値を検索します。日付は 2026-07-04 形式、％は 0.15、金額は桁区切りなし（1000）で入力してください。",
                            "en": "Searches internal cell values. Enter dates as 2026-07-04, percentages as 0.15, and amounts without thousands separators (1000)."},
+    # 内容検索ヒットの位置ラベル（エンジン層から参照）
+    "search_hit_paragraph": {"ja": "段落 {n}",          "en": "Paragraph {n}"},
+    "search_hit_slide":   {"ja": "スライド {n}",        "en": "Slide {n}"},
+    "search_hit_page":    {"ja": "ページ {n}",          "en": "Page {n}"},
     "search_running":     {"ja": "検索中…",            "en": "Searching…"},
     "search_running_n":   {"ja": "検索中… {n}件",      "en": "Searching… {n} found"},
     "search_done_n":      {"ja": "{n}件ヒット （{scanned}ファイル走査）",
