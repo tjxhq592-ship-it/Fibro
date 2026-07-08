@@ -6,6 +6,7 @@ zip 直読みして「文字列キーワードが存在しないブックを即�
 """
 from __future__ import annotations
 
+import html
 import re
 import zipfile
 from collections.abc import Iterator
@@ -46,8 +47,11 @@ def may_contain_keyword(filepath: str | Path, keyword: str) -> bool:
     """sharedStrings.xml の高速プレフィルタ。
 
     False なら文字列セルにキーワードは確実に存在しない（本走査不要）。
-    数値系キーワードは数値セルに入り得る（sharedStrings に載らない）ため
-    常に True。判定不能（破損等）も True を返し本走査に委ねる。
+    XML エンティティ（&amp; 等）と数値文字参照（&#37096; / &#x9928;）は
+    デコードしてから照合するため、`R&D` のような記号入りキーワードも
+    この保証の対象。数値系キーワードは数値セルに入り得る（sharedStrings
+    に載らない）ため常に True。判定不能（破損等）も True を返し本走査に
+    委ねる。
     """
     if _NUMERIC_RE.match(keyword):
         return True
@@ -64,6 +68,10 @@ def may_contain_keyword(filepath: str | Path, keyword: str) -> bool:
                 data = zf.read(name)
                 text = _TAG_RE.sub(b"", data).decode(
                     "utf-8", errors="replace")
+                if "&" in text:
+                    # エンティティ/NCR はどちらも必ず & を含む。
+                    # 含まないテキストは unescape 不要（高速パス）。
+                    text = html.unescape(text)
                 if needle in text.lower():
                     return True
             return False
