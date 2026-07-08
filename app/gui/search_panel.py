@@ -27,7 +27,11 @@ _KIND_ICON = {
     SearchMode.FILENAME: "📁",
     SearchMode.TEXT: "📄",
     SearchMode.EXCEL: "📊",
+    SearchMode.DOCUMENT: "📑",
 }
+
+# 「ファイルの内容」チェックボックス1つで有効になる内容検索モード一式
+_CONTENT_MODES = {SearchMode.TEXT, SearchMode.EXCEL, SearchMode.DOCUMENT}
 
 
 class SearchWorker(QThread):
@@ -160,13 +164,11 @@ class SearchPanel(QWidget):
         modes = QHBoxLayout()
         self.mode_filename = QCheckBox(_("search_filename"))
         self.mode_filename.setChecked(True)
-        self.mode_text = QCheckBox(_("search_text"))
-        self.mode_excel = QCheckBox("Excel")
-        # 表示書式ではなく内部値を検索する仕様の注記（H2 対応）
-        self.mode_excel.setToolTip(_("search_excel_tip"))
+        # テキスト/Excel/Word/PowerPoint/PDF の内容検索をまとめて有効化
+        self.mode_content = QCheckBox(_("search_content"))
+        self.mode_content.setToolTip(_("search_content_tip"))
         self.case_check = QCheckBox(_("search_case"))
-        for w in (self.mode_filename, self.mode_text, self.mode_excel,
-                  self.case_check):
+        for w in (self.mode_filename, self.mode_content, self.case_check):
             modes.addWidget(w)
         modes.addStretch()
         layout.addLayout(modes)
@@ -194,8 +196,8 @@ class SearchPanel(QWidget):
 
     # ---- 検索制御 ----
     def _schedule_incremental(self) -> None:
-        # 内容検索（テキスト/Excel）は重いので入力追従しない
-        if self.mode_text.isChecked() or self.mode_excel.isChecked():
+        # 内容検索（テキスト/Excel/文書）は重いので入力追従しない
+        if self.mode_content.isChecked():
             return
         self._debounce.start()
 
@@ -213,10 +215,8 @@ class SearchPanel(QWidget):
         modes: set[SearchMode] = set()
         if self.mode_filename.isChecked():
             modes.add(SearchMode.FILENAME)
-        if self.mode_text.isChecked():
-            modes.add(SearchMode.TEXT)
-        if self.mode_excel.isChecked():
-            modes.add(SearchMode.EXCEL)
+        if self.mode_content.isChecked():
+            modes |= _CONTENT_MODES
         return SearchOptions(
             keyword=self.keyword_edit.text().strip(),
             modes=modes or {SearchMode.FILENAME},

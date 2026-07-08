@@ -1,5 +1,6 @@
 """検索パネル・お気に入りサイドバーのスモークテスト（offscreen）。"""
 import os
+from pathlib import Path
 
 import pytest
 
@@ -38,7 +39,7 @@ def test_search_panel_streams_results(qapp, tmp_path):
     panel = SearchPanel()
     panel.set_root(str(tmp_path))
     panel.keyword_edit.setText("target")
-    panel.mode_text.setChecked(True)
+    panel.mode_content.setChecked(True)
     panel.start_search()
 
     assert _wait_for(lambda: panel.search_btn.isEnabled())  # 完了待ち
@@ -54,13 +55,35 @@ def test_search_skip_breakdown_shown(qapp, tmp_path):
     panel.set_root(str(tmp_path))
     panel.keyword_edit.setText("anything")
     panel.mode_filename.setChecked(False)
-    panel.mode_excel.setChecked(True)
+    panel.mode_content.setChecked(True)
     panel.start_search()
 
     assert _wait_for(lambda: panel.search_btn.isEnabled())  # 完了待ち
     status = panel.status_label.text()
     assert "1件スキップ" in status
     assert "読込失敗1" in status  # 理由別内訳（ja 既定）
+    panel.cancel_search()
+
+
+def test_search_panel_document_content(qapp, tmp_path):
+    """「ファイルの内容」チェック1つで Word/PDF もヒットし完了する。"""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
+    import gen_office_fixtures as gen
+
+    gen.make_docx(tmp_path, ["hello DOCTOKEN paragraph"], name="a.docx")
+    gen.make_pdf(tmp_path, ["pdf DOCTOKEN page"], name="b.pdf")
+
+    panel = SearchPanel()
+    panel.set_root(str(tmp_path))
+    panel.keyword_edit.setText("DOCTOKEN")
+    panel.mode_filename.setChecked(False)
+    panel.mode_content.setChecked(True)
+    panel.start_search()
+
+    assert _wait_for(lambda: panel.search_btn.isEnabled())  # 完了待ち
+    assert panel.results.count() == 2
+    assert "ヒット" in panel.status_label.text()  # 完了メッセージ（ja 既定）
     panel.cancel_search()
 
 

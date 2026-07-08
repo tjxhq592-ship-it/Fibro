@@ -103,7 +103,7 @@ class TestIncrementalSearch:
         (tmp_path / "target.txt").write_text("x")
         panel = SearchPanel()
         panel.set_root(str(tmp_path))
-        panel.mode_text.setChecked(True)
+        panel.mode_content.setChecked(True)
         panel.keyword_edit.setText("target")
         # デバウンスは起動しない
         assert not panel._debounce.isActive()
