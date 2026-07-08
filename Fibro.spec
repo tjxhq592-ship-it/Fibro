@@ -6,7 +6,8 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[('assets/icons/fibro.ico', 'assets/icons')],
-    hiddenimports=[],
+    # pypdf は関数内で遅延 import しているため、静的解析から漏れないよう明示
+    hiddenimports=['pypdf'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

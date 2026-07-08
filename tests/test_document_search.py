@@ -21,6 +21,7 @@ from app.engine.errors import ContentReadError  # noqa: E402
 from app.engine.office_reader import (  # noqa: E402
     search_in_docx, search_in_pptx,
 )
+from app.engine.pdf_reader import search_in_pdf  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -120,3 +121,56 @@ class TestPptx:
         # presentation.xml はあるがスライドが無い＝正当な空プレゼン
         p = gen.make_pptx(tmp_path, {})
         assert list(search_in_pptx(p, "x")) == []
+
+
+# ---------------------------------------------------------------------------
+# D2: PDF (.pdf)
+# ---------------------------------------------------------------------------
+class TestPdf:
+    def test_hit_with_page_number(self, tmp_path):
+        p = gen.make_pdf(tmp_path, [
+            "first page nothing here",
+            "second page has KEYWORD inside",
+            "third page also has KEYWORD"])
+        hits = list(search_in_pdf(p, "KEYWORD"))
+        assert [label for label, _s in hits] == ["ページ 2", "ページ 3"]
+        assert "KEYWORD" in hits[0][1]
+
+    def test_case_insensitive_by_default(self, tmp_path):
+        p = gen.make_pdf(tmp_path, ["Some Keyword Here"])
+        assert len(list(search_in_pdf(p, "keyword"))) == 1
+        assert list(search_in_pdf(p, "keyword", case_sensitive=True)) == []
+
+    def test_whitespace_normalized(self, tmp_path):
+        # 抽出で空白が崩れても連続空白1つに正規化して照合する。
+        # Tj を2回に分けても extract_text が1行に繋ぐことを利用。
+        p = gen.make_pdf(tmp_path, ["alpha  beta"])
+        assert len(list(search_in_pdf(p, "alpha beta"))) == 1
+
+    def test_textless_page_yields_nothing_without_error(self, tmp_path):
+        # テキスト層なし（画像のみスキャンの代用: 空コンテンツストリーム）
+        p = gen.make_pdf(tmp_path, [None, "page two TOKEN"])
+        hits = list(search_in_pdf(p, "TOKEN"))
+        assert hits == [("ページ 2", "page two TOKEN")]
+
+    def test_all_pages_textless_is_zero_hits(self, tmp_path):
+        p = gen.make_pdf(tmp_path, [None, None])
+        assert list(search_in_pdf(p, "anything")) == []
+
+    def test_max_hits(self, tmp_path):
+        p = gen.make_pdf(tmp_path,
+                         [f"page {i} COMMON" for i in range(1, 9)])
+        assert len(list(search_in_pdf(p, "COMMON", max_hits=4))) == 4
+
+    def test_broken_pdf_raises(self, tmp_path):
+        p = gen.make_broken_pdf(tmp_path)
+        with pytest.raises(ContentReadError):
+            list(search_in_pdf(p, "x"))
+
+    def test_snippet_is_around_hit(self, tmp_path):
+        text = "x" * 150 + " NEEDLE " + "y" * 150
+        p = gen.make_pdf(tmp_path, [text])
+        [(label, snippet)] = list(search_in_pdf(p, "NEEDLE"))
+        assert label == "ページ 1"
+        assert "NEEDLE" in snippet
+        assert len(snippet) <= 220  # 前後合計200文字程度

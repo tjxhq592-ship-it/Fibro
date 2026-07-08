@@ -158,6 +158,72 @@ def make_fake_pptx(out_dir: Path) -> Path:
     return path
 
 
+# ── PDF ───────────────────────────────────────────────────────────────────
+
+def _pdf_escape(text: str) -> str:
+    return (text.replace("\\", r"\\").replace("(", r"\(")
+            .replace(")", r"\)"))
+
+
+def build_pdf_bytes(pages_text: list[str | None]) -> bytes:
+    """テキスト入り最小 PDF をバイト列で組み立てる（外部ライブラリ不使用）。
+
+    pages_text の各要素が 1 ページ。None のページはコンテンツストリーム
+    を空にする＝テキスト層なし（スキャン PDF の代用）。
+    テキストは Helvetica の標準エンコーディングで書くため ASCII 限定。
+    """
+    out = bytearray(b"%PDF-1.4\n")
+    offsets: dict[int, int] = {}
+
+    def add(num: int, body: bytes) -> None:
+        offsets[num] = len(out)
+        out.extend(f"{num} 0 obj\n".encode("ascii"))
+        out.extend(body)
+        out.extend(b"\nendobj\n")
+
+    n = len(pages_text)
+    kids = " ".join(f"{4 + 2 * i} 0 R" for i in range(n))
+    add(1, b"<< /Type /Catalog /Pages 2 0 R >>")
+    add(2, f"<< /Type /Pages /Kids [{kids}] /Count {n} >>".encode("ascii"))
+    add(3, b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    for i, text in enumerate(pages_text):
+        page_num, content_num = 4 + 2 * i, 5 + 2 * i
+        add(page_num, (
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            "/Resources << /Font << /F1 3 0 R >> >> "
+            f"/Contents {content_num} 0 R >>").encode("ascii"))
+        if text is None:
+            stream = b""
+        else:
+            stream = (f"BT /F1 12 Tf 72 720 Td ({_pdf_escape(text)}) Tj ET"
+                      .encode("ascii"))
+        add(content_num,
+            b"<< /Length %d >>\nstream\n%s\nendstream" % (len(stream), stream))
+    size = 4 + 2 * n  # 最大オブジェクト番号 + 1
+    xref_pos = len(out)
+    out.extend(f"xref\n0 {size}\n".encode("ascii"))
+    out.extend(b"0000000000 65535 f \n")
+    for num in range(1, size):
+        out.extend(f"{offsets[num]:010d} 00000 n \n".encode("ascii"))
+    out.extend((f"trailer\n<< /Size {size} /Root 1 0 R >>\n"
+                f"startxref\n{xref_pos}\n%%EOF\n").encode("ascii"))
+    return bytes(out)
+
+
+def make_pdf(out_dir: Path, pages_text: list[str | None],
+             name: str = "doc.pdf") -> Path:
+    path = out_dir / name
+    path.write_bytes(build_pdf_bytes(pages_text))
+    return path
+
+
+def make_broken_pdf(out_dir: Path) -> Path:
+    """PDF ヘッダだけあって構造が壊れているファイル。"""
+    path = out_dir / "broken.pdf"
+    path.write_bytes(b"%PDF-1.4\ngarbage without xref or trailer")
+    return path
+
+
 if __name__ == "__main__":
     here = Path(__file__).resolve().parent
     made = [
@@ -166,6 +232,8 @@ if __name__ == "__main__":
         make_fake_docx(here),
         make_pptx(here, {1: ["slide one"], 2: ["slide two"]}),
         make_fake_pptx(here),
+        make_pdf(here, ["Hello PDF target", None]),
+        make_broken_pdf(here),
     ]
     for path in made:
         print(f"-> {path.name}")
