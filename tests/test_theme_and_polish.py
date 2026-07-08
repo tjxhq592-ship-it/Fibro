@@ -17,27 +17,27 @@ def qapp():
 
 
 class TestThemeManager:
-    def test_default_is_light(self, tmp_path):
+    def test_apply_default_is_light(self, qapp, tmp_path):
+        """theme 未指定の apply はライトテーマ（明るい背景）になる。"""
+        from PySide6.QtGui import QPalette
         tm = ThemeManager(tmp_path / "settings.json")
-        assert tm.theme == "light"
+        tm.apply(qapp)
+        color = qapp.palette().color(QPalette.ColorRole.Window)
+        assert color.lightness() >= 128
 
-    def test_toggle_persists(self, qapp, tmp_path):
-        path = tmp_path / "settings.json"
-        tm = ThemeManager(path)
-        assert tm.toggle(qapp) == "dark"
-        # 再起動相当
-        tm2 = ThemeManager(path)
-        assert tm2.theme == "dark"
-        assert tm2.toggle(qapp) == "light"
-        assert ThemeManager(path).theme == "light"
+    def test_theme_persists_in_project_settings(self, tmp_path):
+        """テーマの永続化先はプロジェクト範囲の ProjectSettingsStore。"""
+        from app.models.project_settings import ProjectSettingsStore
+        ps = ProjectSettingsStore(tmp_path / "ps.json")
+        ps.set("theme", "dark")
+        assert ProjectSettingsStore(tmp_path / "ps.json").get("theme") == "dark"
 
     def test_corrupt_settings_fallback(self, qapp, tmp_path):
         path = tmp_path / "settings.json"
         path.write_text("{ bad json", encoding="utf-8")
         tm = ThemeManager(path)
-        assert tm.theme == "light"
         tm.apply(qapp)  # クラッシュしない
-        assert ThemeManager(path).theme == "light"  # 保存し直されて復旧
+        tm.apply(qapp, "light")
 
     def test_apply_dark_changes_palette(self, qapp, tmp_path):
         tm = ThemeManager(tmp_path / "settings.json")

@@ -39,6 +39,8 @@ from app.gui.recent_sidebar import RecentSidebar
 from app.gui.rename_dialog import RenameDialog
 from app.gui.theme import ThemeManager
 from app.models.favorite import FavoriteStore
+from app.models.project import ProjectManager
+from app.models.project_settings import ProjectSettingsStore
 from app.models.recent import RecentStore
 from app.models.rename_presets import RenamePresetStore
 
@@ -299,9 +301,12 @@ class MainWindow(QMainWindow):
 
         self.rename_executor = RenameExecutor()
         self.file_ops = FileOps()
-        self.favorite_store = FavoriteStore(CONFIG_DIR / "favorites.json")
+        # プロジェクト範囲のストア（favorite/preset/project_settings）は
+        # アクティブプロジェクトのディレクトリから組み立てる。
+        self.project_manager = ProjectManager(CONFIG_DIR)
+        self._load_project_scoped_stores()
+        # 履歴・アプリ全般設定（language/initial_dir 等）はプロジェクト非依存。
         self.recent_store = RecentStore(CONFIG_DIR / "recent.json")
-        self.preset_store = RenamePresetStore(CONFIG_DIR / "rename_presets.json")
         self.theme_manager = ThemeManager(CONFIG_DIR / "settings.json")
         self._clipboard: tuple[str, list[str]] | None = None  # ("copy"|"cut", paths)
         # 実行中のコピー/移動（非同期）。実行中のみ非 None。
@@ -329,6 +334,9 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._build_actions()
         self._restore_tabs()
+        # デュアルペインはアプリ全体設定（プロジェクト切替では復元しない）
+        if self.theme_manager.get("dual_pane", False):
+            self.toggle_dual_pane()
         # Ctrl+Tab / Ctrl+Shift+Tab はフォーカス移動に横取りされ QAction まで
         # 届かないため、アプリ全体のイベントフィルタで先に捕捉する。
         app = QApplication.instance()
@@ -391,6 +399,13 @@ class MainWindow(QMainWindow):
 
         # 上部バー: パンくず（戻る/進む/上は Alt+←/→/↑ のショートカットで）
         top = QHBoxLayout()
+        # パンくずの左隣: プロジェクトメニューボタン
+        self.project_menu_btn = QToolButton()
+        self.project_menu_btn.setIcon(material_icon("menu", dark=self._is_dark()))
+        self.project_menu_btn.setToolTip(_("tip_project_menu"))
+        self.project_menu_btn.setAutoRaise(True)
+        self.project_menu_btn.clicked.connect(self._show_project_menu)
+        top.addWidget(self.project_menu_btn)
         self.breadcrumb = BreadcrumbBar()
         self.breadcrumb.path_selected.connect(self.navigate)
         top.addWidget(self.breadcrumb, stretch=1)
@@ -492,7 +507,7 @@ class MainWindow(QMainWindow):
         self.favorites.file_activated.connect(self._open_file)
         self.recent_sidebar = RecentSidebar(self.recent_store)
         self.recent_sidebar.path_selected.connect(self.navigate)
-        self.places_sidebar = PlacesSidebar(self.theme_manager)
+        self.places_sidebar = PlacesSidebar(self.project_settings)
         self.places_sidebar.path_selected.connect(self.navigate)
         from app.gui.collapsible import CollapsibleSection
         self.fav_section = CollapsibleSection(_("sidebar_fav"), self.favorites)
@@ -826,30 +841,153 @@ class MainWindow(QMainWindow):
             3000)
 
     def _restore_tabs(self) -> None:
-        saved = self.theme_manager.get("tabs", [])
+        """保存済みタブ一覧（プロジェクト範囲）を現在のタブ列の後ろへ復元する。
+
+        起動時はタブ0枚の状態から、プロジェクト切替時は仮タブ1枚の後ろへ
+        追加される。各タブは pending 登録し、選択時に遅延ロードする。
+        """
+        saved = self.project_settings.get("tabs", [])
         paths = ([p for p in saved if isinstance(p, str) and Path(p).is_dir()]
                  if isinstance(saved, list) else [])
         if not paths:
             paths = [self._default_dir()]
 
-        for i, p in enumerate(paths):
+        base = self.tab_bar.count()
+        for p in paths:
             pane = self._make_pane()
             self._tabs.append(pane)
             self.primary_stack.addWidget(pane)
             idx = self.tab_bar.addTab(self._tab_title(p))
             self._install_tab_close_button(idx)
             self.tab_bar.setTabToolTip(idx, p)
+            self._pending_paths[idx] = p
 
-            if i == 0:
-                # アクティブタブのみ即ロード（setRootPath + navigate を実行）
-                self.navigate(p)
-            else:
-                # 非アクティブタブはパスのみ記録し、navigate を遅延させる
-                self._pending_paths[i] = p
+        # 復元した先頭タブを選択してロード。起動直後は先頭 addTab の時点で
+        # index 0 が current 化済み（signal が再発火しない）ため直接呼ぶ。
+        if self.tab_bar.currentIndex() == base:
+            self._on_tab_changed(base)
+        else:
+            self.tab_bar.setCurrentIndex(base)
 
-        self.tab_bar.setCurrentIndex(0)
-        if self.theme_manager.get("dual_pane", False):
-            self.toggle_dual_pane()
+    # ---- プロジェクト ----
+    def _load_project_scoped_stores(self) -> None:
+        """アクティブプロジェクトの保存先からプロジェクト範囲ストアを組み立てる。"""
+        paths = self.project_manager.store_paths(
+            self.project_manager.active_project_id)
+        self.favorite_store = FavoriteStore(paths["favorites"])
+        self.preset_store = RenamePresetStore(paths["rename_presets"])
+        self.project_settings = ProjectSettingsStore(paths["project_settings"])
+
+    def _show_project_menu(self) -> None:
+        """メニューボタン: プロジェクト一覧＋作成/管理をポップアップ表示。"""
+        menu = QMenu(self)
+        active = self.project_manager.active_project_id
+        for proj in self.project_manager.projects:
+            action = menu.addAction(proj.name)
+            action.setCheckable(True)
+            action.setChecked(proj.id == active)
+            action.triggered.connect(
+                lambda checked=False, pid=proj.id: self._switch_project(pid))
+        if self.project_manager.projects:
+            menu.addSeparator()
+        menu.addAction(_("project_menu_new"), self._new_project)
+        menu.addAction(_("project_menu_manage"), self._manage_projects)
+        pos = self.project_menu_btn.mapToGlobal(
+            self.project_menu_btn.rect().bottomLeft())
+        menu.exec(pos)
+
+    def _new_project(self) -> None:
+        """新規プロジェクト作成。作成方法（コピー/空）→名前の順に確認する。"""
+        box = QMessageBox(self)
+        box.setWindowTitle(_("project_new_title"))
+        box.setText(_("project_new_mode_msg"))
+        copy_btn = box.addButton(
+            _("project_new_copy"), QMessageBox.ButtonRole.AcceptRole)
+        empty_btn = box.addButton(
+            _("project_new_empty"), QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is copy_btn:
+            mode = "copy_current"
+        elif clicked is empty_btn:
+            mode = "empty"
+        else:
+            return
+        name, ok = QInputDialog.getText(
+            self, _("project_new_title"), _("project_name_label"),
+            text=_("project_default_new_name"))
+        name = name.strip()
+        if not ok or not name:
+            return
+        self._create_project(mode, name)
+
+    def _create_project(self, mode: str, name: str) -> None:
+        """mode: 'copy_current' | 'empty'。作成後は新規プロジェクトへ即切替。"""
+        proj = self.project_manager.add(name)
+        if mode == "copy_current":
+            self._save_tabs()  # コピー元ファイルを最新化してからコピー
+            self._copy_current_project_data(dest_id=proj.id)
+        self._switch_project(proj.id)
+
+    def _copy_current_project_data(self, dest_id: str) -> None:
+        """現在アクティブな保存元の3ファイルを新規プロジェクトのディレクトリへ
+        コピーする（移動ではない。コピー元は変更しない）。"""
+        import shutil
+        src = self.project_manager.store_paths(
+            self.project_manager.active_project_id)
+        dst = self.project_manager.store_paths(dest_id)
+        for key in ("favorites", "rename_presets", "project_settings"):
+            if src[key].exists():
+                shutil.copy2(src[key], dst[key])
+
+    def _switch_project(self, project_id: str | None) -> None:
+        if project_id == self.project_manager.active_project_id:
+            return
+        if self._copy_thread is not None:
+            QMessageBox.warning(self, _("project_switch_blocked_title"),
+                                _("project_switch_blocked_msg"))
+            return
+        self._save_tabs()  # 現行アクティブプロジェクトの project_settings へ保存
+        self.project_manager.set_active(project_id)
+        self._load_project_scoped_stores()
+        self._reload_all_project_scoped_ui()
+
+    def _manage_projects(self) -> None:
+        """プロジェクト管理ダイアログ（並び替え・リネーム・削除）。"""
+        from app.gui.project_dialog import ProjectDialog
+        prev_active = self.project_manager.active_project_id
+        ProjectDialog(self.project_manager, self).exec()
+        if self.project_manager.active_project_id != prev_active:
+            # アクティブプロジェクトが削除された → デフォルトへフォールバック
+            self._load_project_scoped_stores()
+            self._reload_all_project_scoped_ui()
+
+    def _reload_all_project_scoped_ui(self) -> None:
+        """プロジェクト切替後にプロジェクト範囲の UI を全て再読込する。"""
+        # お気に入り: ストアを差し替えて再描画
+        self.favorites._store = self.favorite_store
+        self.favorites.refresh()
+        # クイックアクセス: place_names の読み込み元を差し替えて再描画
+        self.places_sidebar.set_settings(self.project_settings)
+        # テーマ（ライト/ダーク）を再適用
+        app = QApplication.instance()
+        if app:
+            self.theme_manager.apply(
+                app, self.project_settings.get("theme", "light"))
+            self._refresh_theme_icons()
+        # タブ: 全タブを閉じて保存済みタブ一覧を復元
+        self._close_all_tabs()   # 仮タブ1枚が残る
+        self._restore_tabs()
+        self.close_tab(0)        # 仮タブを閉じる
+
+    def _close_all_tabs(self) -> None:
+        """全タブを閉じる。「最後の1タブは閉じられない」既存制約（close_tab）に
+        触れないよう、仮タブを1枚足してから既存タブを全て閉じる。"""
+        old = len(self._tabs)
+        self.new_tab(self._default_dir())
+        for _i in range(old):
+            self.close_tab(0)
 
     def _build_actions(self) -> None:
         def add(text: str, seq: str, slot) -> QAction:
@@ -1739,8 +1877,8 @@ class MainWindow(QMainWindow):
             self.proxy.mapFromSource(self.list_model.index(path)))
 
     def _is_dark(self) -> bool:
-        """現在テーマがダークかどうか。"""
-        return self.theme_manager.theme == "dark"
+        """現在テーマがダークかどうか（テーマはプロジェクト範囲設定）。"""
+        return self.project_settings.get("theme", "light") == "dark"
 
     def _show_help_menu(self) -> None:
         """? ボタン: ヘルプ項目をポップアップメニューで表示。"""
@@ -1789,16 +1927,23 @@ class MainWindow(QMainWindow):
     def toggle_theme(self) -> None:
         app = QApplication.instance()
         if app:
-            theme = self.theme_manager.toggle(app)
+            theme = "light" if self._is_dark() else "dark"
+            self.project_settings.set("theme", theme)  # プロジェクト範囲で永続化
+            self.theme_manager.apply(app, theme)
             self.statusBar().showMessage(
                 _("theme_dark" if theme == "dark" else "theme_light"), 3000)
-            self.favorites.refresh()
-            self.recent_sidebar.refresh()
-            self.settings_btn.setIcon(
-                material_icon("settings", dark=self._is_dark()))
-            self.shortcuts_btn.setIcon(
-                material_icon("keyboard_command_key", dark=self._is_dark()))
-            self.help_btn.setIcon(material_icon("help", dark=self._is_dark()))
+            self._refresh_theme_icons()
+
+    def _refresh_theme_icons(self) -> None:
+        """テーマ変更後にテーマ色依存の UI（アイコン・サイドバー）を再描画する。"""
+        dark = self._is_dark()
+        self.favorites.refresh()
+        self.recent_sidebar.refresh()
+        self.project_menu_btn.setIcon(material_icon("menu", dark=dark))
+        self.settings_btn.setIcon(material_icon("settings", dark=dark))
+        self.shortcuts_btn.setIcon(
+            material_icon("keyboard_command_key", dark=dark))
+        self.help_btn.setIcon(material_icon("help", dark=dark))
 
     def rename_single(self) -> None:
         """F2: 選択中1件をその場でリネーム（RenameExecutor 経由で Undo 可）。"""
@@ -1908,7 +2053,8 @@ class MainWindow(QMainWindow):
         })
 
     def _save_tabs(self) -> None:
-        self.theme_manager.set(
+        """開いているタブ一覧をアクティブプロジェクトの設定へ保存する。"""
+        self.project_settings.set(
             "tabs", [p.current_path for p in self._tabs if p.current_path])
 
     def _save_columns(self) -> None:

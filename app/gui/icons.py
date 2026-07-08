@@ -22,6 +22,9 @@ _MATERIAL_SVG_TEMPLATE = (
 
 # Material Symbols Outlined のパスデータ
 _MATERIAL_PATHS = {
+    "menu":
+        '<path d="M120-240v-80h720v80H120Zm0-200v-80h720v80H120Zm0-200v-80h720'
+        'v80H120Z"/>',
     "keyboard_command_key":
         '<path d="M260-120q-58 0-99-41t-41-99q0-58 41-99t99-41h60v-160h-60q-58 '
         '0-99-41t-41-99q0-58 41-99t99-41q58 0 99 41t41 99v60h160v-60q0-58 '

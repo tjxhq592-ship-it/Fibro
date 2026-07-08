@@ -51,15 +51,13 @@ class PlacesSidebar(QWidget):
 
     def __init__(self, settings=None, parent=None) -> None:
         super().__init__(parent)
-        self._settings = settings   # ThemeManager（カスタム表示名の永続化先）
+        # ProjectSettingsStore（カスタム表示名 place_names の永続化先）
+        self._settings = settings
         self._places: list = []     # app.places.Place のリスト
         self._reach_gen = 0
-        # パス（normcase）→ ユーザー設定の表示名。settings.json に保存する。
+        # パス（normcase）→ ユーザー設定の表示名。
         self._custom_names: dict[str, str] = {}
-        if settings is not None:
-            saved = settings.get("place_names", {})
-            if isinstance(saved, dict):
-                self._custom_names = {str(k): str(v) for k, v in saved.items()}
+        self._load_custom_names()
         self._reach_checked.connect(self._apply_reachability)
 
         layout = QVBoxLayout(self)
@@ -81,6 +79,20 @@ class PlacesSidebar(QWidget):
         # 到達性チェックのみ遅延（ネットワーク遅延が起動をブロックしないため）。
         self._load()
         QTimer.singleShot(500, self._check_reachability)
+
+    def _load_custom_names(self) -> None:
+        """現在の settings からカスタム表示名を読み込む。"""
+        self._custom_names = {}
+        if self._settings is not None:
+            saved = self._settings.get("place_names", {})
+            if isinstance(saved, dict):
+                self._custom_names = {str(k): str(v) for k, v in saved.items()}
+
+    def set_settings(self, settings) -> None:
+        """place_names の永続化先を差し替えて表示を更新する（プロジェクト切替用）。"""
+        self._settings = settings
+        self._load_custom_names()
+        self.refresh()
 
     def _load(self) -> None:
         """場所を取得してリストを構築する（同期・高速）。"""

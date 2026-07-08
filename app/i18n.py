@@ -51,6 +51,7 @@ _STRINGS: dict[str, dict[str, str]] = {
     "menu_about":         {"ja": "Fibro について…", "en": "About Fibro…"},
 
     # ── ツールバーボタンのツールチップ ──
+    "tip_project_menu":   {"ja": "プロジェクト",     "en": "Projects"},
     "tip_settings":       {"ja": "設定",            "en": "Settings"},
     "tip_shortcuts":      {"ja": "ショートカット一覧", "en": "Shortcuts"},
     "tip_help":           {"ja": "ヘルプ",          "en": "Help"},
@@ -305,6 +306,29 @@ _STRINGS: dict[str, dict[str, str]] = {
     "place_reset_name":   {"ja": "既定名に戻す",        "en": "Reset to Default Name"},
     "fav_note_title":     {"ja": "メモを編集",          "en": "Edit Note"},
     "fav_note_label":     {"ja": "メモ:",               "en": "Note:"},
+
+    # ── プロジェクト ──
+    "project_menu_new":     {"ja": "新規プロジェクト…",   "en": "New Project…"},
+    "project_menu_manage":  {"ja": "プロジェクトを管理…", "en": "Manage Projects…"},
+    "project_new_title":    {"ja": "新規プロジェクト",    "en": "New Project"},
+    "project_new_mode_msg": {"ja": "新規プロジェクトの作成方法を選んでください。",
+                             "en": "Choose how to create the new project."},
+    "project_new_copy":     {"ja": "現在の状態をコピーして作成",
+                             "en": "Copy Current State"},
+    "project_new_empty":    {"ja": "空のプロジェクトを作成",
+                             "en": "Create Empty Project"},
+    "project_name_label":   {"ja": "プロジェクト名:",     "en": "Project name:"},
+    "project_default_new_name": {"ja": "新しいプロジェクト", "en": "New Project"},
+    "project_manage_title": {"ja": "プロジェクトを管理",  "en": "Manage Projects"},
+    "project_btn_rename":   {"ja": "名前を変更…",         "en": "Rename…"},
+    "project_btn_delete":   {"ja": "削除…",              "en": "Delete…"},
+    "project_rename_title": {"ja": "プロジェクト名を変更", "en": "Rename Project"},
+    "project_delete_title": {"ja": "プロジェクトを削除",  "en": "Delete Project"},
+    "project_delete_msg":   {"ja": "「{name}」を削除しますか?\n\nこのプロジェクトのお気に入り・タブ・テーマ・クイックアクセス設定・リネームプリセットは全て削除されます。",
+                             "en": "Delete \"{name}\"?\n\nAll favorites, tabs, theme, quick-access settings and rename presets of this project will be deleted."},
+    "project_switch_blocked_title": {"ja": "プロジェクト切替", "en": "Switch Project"},
+    "project_switch_blocked_msg":   {"ja": "ファイルのコピー/移動を実行中のため、プロジェクトを切り替えられません。\n完了後にもう一度お試しください。",
+                                     "en": "Cannot switch projects while a file copy/move is in progress.\nPlease try again after it completes."},
 
     # ── ショートカット一覧（カテゴリ） ──
     "sc_cat_file":        {"ja": "ファイル操作",        "en": "File Operations"},

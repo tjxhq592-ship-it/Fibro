@@ -19,7 +19,13 @@ def main() -> int:
     from PySide6.QtWidgets import QApplication
 
     from app.gui.main_window import MainWindow
-    from app.paths import APP_ICON
+    from app.migrations import migrate_default_project_settings
+    from app.paths import APP_ICON, CONFIG_DIR
+
+    # 旧 settings.json のプロジェクト範囲キー（theme/place_names/tabs）を
+    # default_project_settings.json へ移す（初回起動時のみ・冪等）。
+    # MainWindow が settings.json を読む前に必ず実行する。
+    migrate_default_project_settings(CONFIG_DIR)
 
     app = QApplication(sys.argv)
     app.setApplicationName("Fibro")
@@ -35,7 +41,9 @@ def main() -> int:
     server.start()
     window._instance_server = server  # GC 防止に保持
 
-    window.theme_manager.apply(app)  # 保存済みテーマを起動時に適用
+    # 保存済みテーマ（プロジェクト範囲）を起動時に適用
+    window.theme_manager.apply(
+        app, window.project_settings.get("theme", "light"))
     window.show()
 
     # フォルダ引数付き起動（ダブルクリックでの「開く」差し替え等）は

@@ -189,7 +189,7 @@ class TestTabs:
         win.navigate(str(a))
         win.new_tab(str(b))
         win._save_tabs()
-        saved = win.theme_manager.get("tabs", [])
+        saved = win.project_settings.get("tabs", [])
         assert str(a) in saved and str(b) in saved
 
     # 21: 「＋」タブ追加ボタン

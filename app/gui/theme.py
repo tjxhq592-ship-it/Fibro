@@ -1,6 +1,9 @@
 """ダーク/ライトテーマ。Fusion + QPalette + QSS で外部依存なし。
 
-設定は config/settings.json に永続化（破損時は既定ライトにフォールバック）。
+アプリ全般設定（language/initial_dir/view_mode 等）は config/settings.json に
+永続化する。テーマ（"theme" キー）はプロジェクト範囲のため ThemeManager では
+保持せず、ProjectSettingsStore に保存された値を apply(app, theme=...) で
+呼び出し側が明示的に渡す。
 色は TOKENS（dark/light）に集約し、QPalette と QSS の両方を同じ値から生成する。
 """
 from __future__ import annotations
@@ -456,12 +459,9 @@ class ThemeManager:
         self._settings[key] = value
         self._save()
 
-    @property
-    def theme(self) -> str:
-        return self._settings.get("theme", "light")
-
     def apply(self, app: QApplication, theme: str | None = None) -> None:
-        theme = theme or self.theme
+        """テーマを適用する。永続化は行わない（保存はプロジェクト設定側）。"""
+        theme = theme or "light"
         t = TOKENS["dark"] if theme == "dark" else TOKENS["light"]
 
         app.setStyle("Fusion")
@@ -469,9 +469,6 @@ class ThemeManager:
         self._apply_color_scheme(app, theme)  # OS タイトルバー等を追従
         app.setPalette(_palette(t))
         app.setStyleSheet(_stylesheet(t))
-
-        self._settings["theme"] = theme
-        self._save()
 
     @staticmethod
     def _apply_color_scheme(app: QApplication, theme: str) -> None:
@@ -485,7 +482,3 @@ class ThemeManager:
                 else Qt.ColorScheme.Light
             )
 
-    def toggle(self, app: QApplication) -> str:
-        new_theme = "dark" if self.theme == "light" else "light"
-        self.apply(app, new_theme)
-        return new_theme
