@@ -65,6 +65,70 @@ class TestThemeManager:
             tm.apply(qapp, "light")  # no-op 環境でも落ちないこと
 
 
+class TestThemeTokenIntegrity:
+    """10テーマ全てが同一キー構成を持つことを保証する回帰テスト。"""
+
+    def test_all_themes_have_same_keys(self):
+        from app.gui.theme import TOKENS
+        base_keys = set(TOKENS["light"].keys())
+        for theme_name, tokens in TOKENS.items():
+            assert set(tokens.keys()) == base_keys, f"{theme_name} のキー構成が不一致"
+
+    def test_theme_order_and_tokens_match(self):
+        from app.gui.theme import TOKENS, THEME_ORDER
+        assert len(THEME_ORDER) == 10
+        assert set(THEME_ORDER) == set(TOKENS.keys())
+
+    def test_all_themes_have_meta(self):
+        from app.gui.theme import THEME_META, THEME_ORDER
+        for key in THEME_ORDER:
+            assert key in THEME_META
+            assert "is_dark" in THEME_META[key]
+            assert "label_ja" in THEME_META[key]
+            assert "label_en" in THEME_META[key]
+
+    def test_unknown_theme_falls_back_to_light(self, qapp, tmp_path):
+        """壊れた settings.json 等の未知テーマ名でも例外なく light になる。"""
+        from PySide6.QtGui import QColor, QPalette
+        from app.gui.theme import TOKENS, ThemeManager
+        tm = ThemeManager(tmp_path / "settings.json")
+        tm.apply(qapp, "nonexistent_theme")
+        color = qapp.palette().color(QPalette.ColorRole.Window)
+        assert color == QColor(TOKENS["light"]["surface"])
+        tm.apply(qapp, "light")
+
+    def test_set_theme_applies_and_returns_name(self, qapp, tmp_path):
+        from PySide6.QtGui import QColor, QPalette
+        from app.gui.theme import TOKENS, ThemeManager
+        tm = ThemeManager(tmp_path / "settings.json")
+        applied = tm.set_theme(qapp, "nord")
+        assert applied == "nord"
+        color = qapp.palette().color(QPalette.ColorRole.Window)
+        assert color == QColor(TOKENS["nord"]["surface"])
+        tm.apply(qapp, "light")
+
+    def test_set_theme_unknown_returns_light(self, qapp, tmp_path):
+        from app.gui.theme import ThemeManager
+        tm = ThemeManager(tmp_path / "settings.json")
+        assert tm.set_theme(qapp, "no_such_theme") == "light"
+
+    def test_current_accent_follows_theme(self, qapp, tmp_path):
+        from PySide6.QtGui import QColor
+        from app.gui.theme import TOKENS, ThemeManager, current_accent
+        tm = ThemeManager(tmp_path / "settings.json")
+        tm.set_theme(qapp, "dracula")
+        assert current_accent() == QColor(TOKENS["dracula"]["accent"])
+        tm.set_theme(qapp, "light")
+        assert current_accent() == QColor(TOKENS["light"]["accent"])
+
+    def test_status_colors_any_theme(self):
+        from app.gui.theme import TOKENS, THEME_ORDER, status_colors
+        from PySide6.QtGui import QColor
+        for key in THEME_ORDER:
+            sc = status_colors(key)
+            assert sc["error"] == QColor(TOKENS[key]["status_error"])
+
+
 class TestSingleRename:
     def test_f2_rename_via_executor(self, qapp, tmp_path):
         """F2 相当の単一リネームが RenameExecutor 経由で Undo 可能。"""

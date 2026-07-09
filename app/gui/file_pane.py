@@ -218,8 +218,8 @@ class FilePane(QWidget):
         from PySide6.QtGui import QColor, QPainter, QPalette, QPen
         painter = QPainter(self)
         if self._active_border:
-            from app.gui.theme import ACCENT
-            pen = QPen(ACCENT, 2)
+            from app.gui.theme import current_accent
+            pen = QPen(current_accent(), 2)
         else:
             pen = QPen(self.palette().color(QPalette.ColorRole.Mid), 1)
         painter.setPen(pen)

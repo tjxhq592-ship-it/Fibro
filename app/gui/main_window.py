@@ -14,7 +14,7 @@ from PySide6.QtCore import (
     QDir, QFileInfo, QItemSelectionModel, QModelIndex, QRunnable, Qt,
     QThread, QThreadPool, QTimer, Signal,
 )
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QDialog, QDialogButtonBox, QDockWidget, QFileIconProvider,
     QFileSystemModel, QFormLayout, QFrame, QGridLayout, QHBoxLayout,
@@ -37,7 +37,7 @@ from app.gui.preview_dialog import QuickPreviewDialog
 from app.gui.properties_dialog import PropertiesDialog
 from app.gui.recent_sidebar import RecentSidebar
 from app.gui.rename_dialog import RenameDialog
-from app.gui.theme import ThemeManager
+from app.gui.theme import THEME_META, THEME_ORDER, ThemeManager
 from app.models.favorite import FavoriteStore
 from app.models.project import ProjectManager
 from app.models.project_settings import ProjectSettingsStore
@@ -1038,7 +1038,21 @@ class MainWindow(QMainWindow):
     def _show_settings_menu(self) -> None:
         """歯車ボタン: 設定項目をポップアップメニューで表示。"""
         menu = QMenu(self)
-        menu.addAction(_("menu_toggle_theme"), self.toggle_theme)
+        # テーマ選択サブメニュー（10種・排他チェック）
+        theme_menu = menu.addMenu(_("menu_theme"))
+        theme_group = QActionGroup(theme_menu)
+        theme_group.setExclusive(True)
+        current_theme = self.project_settings.get("theme", "light")
+        lang = self.theme_manager.get("language", "ja")
+        for key in THEME_ORDER:
+            meta = THEME_META[key]
+            label = meta["label_ja"] if lang == "ja" else meta["label_en"]
+            action = theme_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(key == current_theme)
+            action.triggered.connect(
+                lambda checked, k=key: self._on_theme_selected(k))
+            theme_group.addAction(action)
         menu.addAction(_("menu_set_initial"), self._set_initial_directory)
         # USB 抜き差し後などに場所一覧を手動で再スキャン
         menu.addAction(_("menu_refresh_places"),
@@ -1877,8 +1891,9 @@ class MainWindow(QMainWindow):
             self.proxy.mapFromSource(self.list_model.index(path)))
 
     def _is_dark(self) -> bool:
-        """現在テーマがダークかどうか（テーマはプロジェクト範囲設定）。"""
-        return self.project_settings.get("theme", "light") == "dark"
+        """現在テーマが暗色系かどうか（テーマはプロジェクト範囲設定）。"""
+        theme = self.project_settings.get("theme", "light")
+        return THEME_META.get(theme, THEME_META["light"])["is_dark"]
 
     def _show_help_menu(self) -> None:
         """? ボタン: ヘルプ項目をポップアップメニューで表示。"""
@@ -1924,15 +1939,18 @@ class MainWindow(QMainWindow):
                     + self.shortcuts_btn.width(), btn_pos.y() + 4)
         dialog.show()
 
-    def toggle_theme(self) -> None:
+    def _on_theme_selected(self, theme_key: str) -> None:
+        """設定メニューのテーマサブメニューから選択されたテーマを適用する。"""
         app = QApplication.instance()
-        if app:
-            theme = "light" if self._is_dark() else "dark"
-            self.project_settings.set("theme", theme)  # プロジェクト範囲で永続化
-            self.theme_manager.apply(app, theme)
-            self.statusBar().showMessage(
-                _("theme_dark" if theme == "dark" else "theme_light"), 3000)
-            self._refresh_theme_icons()
+        if not app:
+            return
+        applied = self.theme_manager.set_theme(app, theme_key)
+        self.project_settings.set("theme", applied)  # プロジェクト範囲で永続化
+        meta = THEME_META[applied]
+        lang = self.theme_manager.get("language", "ja")
+        label = meta["label_ja"] if lang == "ja" else meta["label_en"]
+        self.statusBar().showMessage(label, 3000)
+        self._refresh_theme_icons()
 
     def _refresh_theme_icons(self) -> None:
         """テーマ変更後にテーマ色依存の UI（アイコン・サイドバー）を再描画する。"""

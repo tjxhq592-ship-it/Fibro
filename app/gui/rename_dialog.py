@@ -59,7 +59,9 @@ class RenameDialog(QDialog):
         self._preset_store = preset_store
         self._plan: RenamePlan | None = None
 
-        _theme = getattr(getattr(parent, "theme_manager", None), "theme", "light")
+        # テーマはプロジェクト範囲設定（MainWindow.project_settings）に保存される
+        _ps = getattr(parent, "project_settings", None)
+        _theme = _ps.get("theme", "light") if _ps is not None else "light"
         self._status_color = _build_status_color(_theme)
 
         self._build_ui()

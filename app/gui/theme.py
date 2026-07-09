@@ -1,10 +1,12 @@
-"""ダーク/ライトテーマ。Fusion + QPalette + QSS で外部依存なし。
+"""カラーテーマ（10種）。Fusion + QPalette + QSS で外部依存なし。
 
 アプリ全般設定（language/initial_dir/view_mode 等）は config/settings.json に
 永続化する。テーマ（"theme" キー）はプロジェクト範囲のため ThemeManager では
 保持せず、ProjectSettingsStore に保存された値を apply(app, theme=...) で
 呼び出し側が明示的に渡す。
-色は TOKENS（dark/light）に集約し、QPalette と QSS の両方を同じ値から生成する。
+色は TOKENS（テーマ名 → 19キーのセマンティックトークン）に集約し、
+QPalette と QSS の両方を同じ値から生成する。未知のテーマ名は light に
+フォールバックする。
 """
 from __future__ import annotations
 
@@ -20,9 +22,33 @@ from app.atomicio import atomic_write_text
 APP_FONT_FAMILIES = ["Segoe UI", "Yu Gothic UI", "sans-serif"]
 APP_FONT_SIZE_PT = 9
 
+# --- テーマ一覧 -------------------------------------------------------------
+# メニュー表示順。内部キーもこの順序でサブメニューを構築する。
+THEME_ORDER: list[str] = [
+    "light", "dark", "nord", "solarized_light", "solarized_dark",
+    "dracula", "gruvbox_dark", "one_dark", "monokai", "high_contrast",
+]
+
+# 表示名と明暗分類（OSタイトルバー・アイコン色分岐に使う）
+THEME_META: dict[str, dict] = {
+    "light":           {"label_ja": "ライト",              "label_en": "Light",           "is_dark": False},
+    "dark":            {"label_ja": "ダーク",              "label_en": "Dark",            "is_dark": True},
+    "nord":            {"label_ja": "Nord",                "label_en": "Nord",            "is_dark": True},
+    "solarized_light": {"label_ja": "Solarized ライト",    "label_en": "Solarized Light", "is_dark": False},
+    "solarized_dark":  {"label_ja": "Solarized ダーク",    "label_en": "Solarized Dark",  "is_dark": True},
+    "dracula":         {"label_ja": "Dracula",             "label_en": "Dracula",         "is_dark": True},
+    "gruvbox_dark":    {"label_ja": "Gruvbox ダーク",      "label_en": "Gruvbox Dark",    "is_dark": True},
+    "one_dark":        {"label_ja": "One Dark",            "label_en": "One Dark",        "is_dark": True},
+    "monokai":         {"label_ja": "Monokai",             "label_en": "Monokai",         "is_dark": True},
+    "high_contrast":   {"label_ja": "ハイコントラスト",    "label_en": "High Contrast",   "is_dark": True},
+}
+
 # --- デザイントークン -------------------------------------------------------
 # 3層の明度（bg=最暗 / surface=パネル / elevated=行ストライプ・タブ選択）
-# + border（細線）+ accent。dark/light で同じキー構成。
+# + border（細線）+ accent。全テーマで同じキー構成。
+# 各配色は公式パレット（Nord / Solarized / Dracula / Gruvbox / One Dark /
+# Monokai）の値を基準に、公式に存在しない中間色（surface/elevated 段差等）は
+# 近傍色から補間した近似値。high_contrast のみアクセシビリティ用の自作配色。
 TOKENS: dict[str, dict[str, str]] = {
     "dark": {
         "bg": "#16171a",
@@ -78,15 +104,109 @@ TOKENS: dict[str, dict[str, str]] = {
         "status_warn": "#ef6c00",
         "status_error": "#c62828",
     },
+    "nord": {
+        "bg": "#2e3440", "surface": "#3b4252", "elevated": "#434c5e",
+        "app_base": "#262a33", "card": "#3b4252",
+        "border": "#434c5e", "border_str": "#4c566a",
+        "text": "#eceff4", "text_sub": "#d8dee9", "text_hint": "#7b88a1",
+        "accent": "#88c0d0",
+        "sel_bg": "rgba(136,192,208,0.28)", "hover_bg": "rgba(255,255,255,0.07)",
+        "scrollbar": "#4c566a",
+        "status_ok": "#a3be8c", "status_unchanged": "#7b88a1",
+        "status_warn": "#d08770", "status_error": "#bf616a",
+    },
+    "solarized_light": {
+        "bg": "#fdf6e3", "surface": "#eee8d5", "elevated": "#e4ddc7",
+        "app_base": "#f5efd9", "card": "#fdf6e3",
+        "border": "#eee8d5", "border_str": "#93a1a1",
+        "text": "#586e75", "text_sub": "#657b83", "text_hint": "#93a1a1",
+        "accent": "#268bd2",
+        "sel_bg": "rgba(38,139,210,0.14)", "hover_bg": "rgba(0,0,0,0.04)",
+        "scrollbar": "#93a1a1",
+        "status_ok": "#859900", "status_unchanged": "#93a1a1",
+        "status_warn": "#cb4b16", "status_error": "#dc322f",
+    },
+    "solarized_dark": {
+        "bg": "#002b36", "surface": "#073642", "elevated": "#0a4657",
+        "app_base": "#001e27", "card": "#073642",
+        "border": "#0d4f5c", "border_str": "#586e75",
+        "text": "#93a1a1", "text_sub": "#839496", "text_hint": "#657b83",
+        "accent": "#268bd2",
+        "sel_bg": "rgba(38,139,210,0.28)", "hover_bg": "rgba(255,255,255,0.06)",
+        "scrollbar": "#586e75",
+        "status_ok": "#859900", "status_unchanged": "#657b83",
+        "status_warn": "#cb4b16", "status_error": "#dc322f",
+    },
+    "dracula": {
+        "bg": "#282a36", "surface": "#2f313f", "elevated": "#44475a",
+        "app_base": "#21222c", "card": "#282a36",
+        "border": "#383a4a", "border_str": "#44475a",
+        "text": "#f8f8f2", "text_sub": "#a4a8c5", "text_hint": "#6272a4",
+        "accent": "#bd93f9",
+        "sel_bg": "rgba(189,147,249,0.28)", "hover_bg": "rgba(255,255,255,0.07)",
+        "scrollbar": "#6272a4",
+        "status_ok": "#50fa7b", "status_unchanged": "#6272a4",
+        "status_warn": "#ffb86c", "status_error": "#ff5555",
+    },
+    "gruvbox_dark": {
+        "bg": "#282828", "surface": "#3c3836", "elevated": "#504945",
+        "app_base": "#1d2021", "card": "#3c3836",
+        "border": "#504945", "border_str": "#665c54",
+        "text": "#ebdbb2", "text_sub": "#d5c4a1", "text_hint": "#a89984",
+        "accent": "#fe8019",
+        "sel_bg": "rgba(254,128,25,0.25)", "hover_bg": "rgba(255,255,255,0.06)",
+        "scrollbar": "#7c6f64",
+        "status_ok": "#b8bb26", "status_unchanged": "#928374",
+        "status_warn": "#fabd2f", "status_error": "#fb4934",
+    },
+    "one_dark": {
+        "bg": "#282c34", "surface": "#21252b", "elevated": "#2c313a",
+        "app_base": "#1e2227", "card": "#282c34",
+        "border": "#3a3f4b", "border_str": "#4b5263",
+        "text": "#abb2bf", "text_sub": "#828997", "text_hint": "#5c6370",
+        "accent": "#61afef",
+        "sel_bg": "rgba(97,175,239,0.25)", "hover_bg": "rgba(255,255,255,0.06)",
+        "scrollbar": "#4b5263",
+        "status_ok": "#98c379", "status_unchanged": "#5c6370",
+        "status_warn": "#d19a66", "status_error": "#e06c75",
+    },
+    "monokai": {
+        "bg": "#272822", "surface": "#2d2e27", "elevated": "#3e3d32",
+        "app_base": "#1e1f1c", "card": "#272822",
+        "border": "#3e3d32", "border_str": "#49483e",
+        "text": "#f8f8f2", "text_sub": "#c2c2bf", "text_hint": "#75715e",
+        "accent": "#a6e22e",
+        "sel_bg": "rgba(166,226,46,0.22)", "hover_bg": "rgba(255,255,255,0.07)",
+        "scrollbar": "#75715e",
+        "status_ok": "#a6e22e", "status_unchanged": "#75715e",
+        "status_warn": "#fd971f", "status_error": "#f92672",
+    },
+    "high_contrast": {
+        "bg": "#000000", "surface": "#0a0a0a", "elevated": "#1a1a1a",
+        "app_base": "#000000", "card": "#0a0a0a",
+        "border": "#ffffff", "border_str": "#ffffff",
+        "text": "#ffffff", "text_sub": "#e0e0e0", "text_hint": "#b0b0b0",
+        "accent": "#ffff00",
+        "sel_bg": "rgba(255,255,0,0.35)", "hover_bg": "rgba(255,255,255,0.15)",
+        "scrollbar": "#ffffff",
+        "status_ok": "#00ff00", "status_unchanged": "#b0b0b0",
+        "status_warn": "#ffaa00", "status_error": "#ff3333",
+    },
 }
 
-# 既存コードが import している定数（file_pane の枠線描画等）を維持。
-ACCENT = QColor(TOKENS["dark"]["accent"])
+# 現在テーマのアクセント色。ThemeManager.apply() が更新するモジュール状態。
+# import 時に固定される旧 ACCENT 定数はテーマ追従しないため廃止した。
+_current_accent = QColor(TOKENS["light"]["accent"])
+
+
+def current_accent() -> QColor:
+    """現在のテーマのアクセントカラーを返す（file_pane 等のカスタム描画用）。"""
+    return _current_accent
 
 
 def status_colors(theme: str = "light") -> dict[str, QColor]:
     """ステータス表示用カラーをテーマ別に返す（rename_dialog 等で使用）。"""
-    t = TOKENS["dark"] if theme == "dark" else TOKENS["light"]
+    t = TOKENS.get(theme, TOKENS["light"])
     return {
         "ok": QColor(t["status_ok"]),
         "unchanged": QColor(t["status_unchanged"]),
@@ -460,15 +580,34 @@ class ThemeManager:
         self._save()
 
     def apply(self, app: QApplication, theme: str | None = None) -> None:
-        """テーマを適用する。永続化は行わない（保存はプロジェクト設定側）。"""
+        """テーマを適用する。永続化は行わない（保存はプロジェクト設定側）。
+
+        未知のテーマ名（壊れた settings.json 等）は light にフォールバックする。
+        """
         theme = theme or "light"
-        t = TOKENS["dark"] if theme == "dark" else TOKENS["light"]
+        if theme not in TOKENS:
+            theme = "light"
+        t = TOKENS[theme]
 
         app.setStyle("Fusion")
         app.setFont(app_font())          # スタイル変更でリセットされる環境への保険
         self._apply_color_scheme(app, theme)  # OS タイトルバー等を追従
         app.setPalette(_palette(t))
         app.setStyleSheet(_stylesheet(t))
+
+        global _current_accent
+        _current_accent = QColor(t["accent"])
+
+    def set_theme(self, app: QApplication, theme: str) -> str:
+        """指定テーマを適用し、実際に適用されたテーマ名を返す。
+
+        未知のテーマ名は light にフォールバックする。永続化は呼び出し側
+        （ProjectSettingsStore）が返り値を保存して行う。
+        """
+        if theme not in TOKENS:
+            theme = "light"
+        self.apply(app, theme)
+        return theme
 
     @staticmethod
     def _apply_color_scheme(app: QApplication, theme: str) -> None:
@@ -477,8 +616,8 @@ class ThemeManager:
 
         hints = app.styleHints()
         if hasattr(hints, "setColorScheme"):
+            is_dark = THEME_META.get(theme, THEME_META["light"])["is_dark"]
             hints.setColorScheme(
-                Qt.ColorScheme.Dark if theme == "dark"
-                else Qt.ColorScheme.Light
+                Qt.ColorScheme.Dark if is_dark else Qt.ColorScheme.Light
             )
 
