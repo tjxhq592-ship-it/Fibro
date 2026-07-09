@@ -177,10 +177,18 @@ class TestMainWindowFeatures:
         assert win.current_path == str(b)
 
     def test_disk_usage_shown(self, qapp, tmp_path, monkeypatch):
+        from PySide6.QtCore import QEventLoop, QTimer
         work = tmp_path / "disk"
         work.mkdir()
         win = self._make_window(tmp_path, monkeypatch)
         win.navigate(str(work))
+        # 空き容量の取得が非同期になったため、結果が返るまでイベントを回す
+        loop = QEventLoop()
+        elapsed = 0
+        while "空き" not in win.disk_label.text() and elapsed < 5000:
+            QTimer.singleShot(50, loop.quit)
+            loop.exec()
+            elapsed += 50
         assert "空き" in win.disk_label.text()
 
 

@@ -234,11 +234,11 @@ class TestProjectSwitch:
         monkeypatch.setattr(
             QMessageBox, "warning",
             lambda *a, **k: warned.append(a) or QMessageBox.StandardButton.Ok)
-        win._copy_thread = object()  # 実行中を偽装
+        win._op_thread = object()  # 実行中を偽装
         win._switch_project(proj.id)
         assert warned
         assert win.project_manager.active_project_id is None  # 切替されない
-        win._copy_thread = None
+        win._op_thread = None
 
     def test_app_wide_settings_unaffected(self, qapp, tmp_path, monkeypatch):
         """項目9: 履歴・言語・initial_dir 等はプロジェクト切替の影響を受けない。"""

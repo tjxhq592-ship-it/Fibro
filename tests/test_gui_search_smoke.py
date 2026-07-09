@@ -106,6 +106,8 @@ def test_favorites_sidebar_roundtrip(qapp, tmp_path):
     received = []
     sidebar.path_selected.connect(received.append)
     sidebar._on_clicked(sidebar.tree.topLevelItem(0))
+    # 到達性チェックが非同期化されたため、結果が返るまでイベントを回す
+    assert _wait_for(lambda: received)
     assert received == [str(tmp_path)]
 
 

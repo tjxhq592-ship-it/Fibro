@@ -11,7 +11,7 @@ import time
 
 from PySide6.QtCore import QObject, Signal, Slot
 
-from app.engine.file_ops import CopyPlanItem, FileOps, OpRecord
+from app.engine.file_ops import CopyPlanItem, FileOps, OpRecord, total_size
 
 
 class CopyWorker(QObject):
@@ -25,12 +25,15 @@ class CopyWorker(QObject):
     _EMIT_INTERVAL = 0.05  # s。進捗 emit の最小間隔（UI 更新の間引き）
 
     def __init__(self, file_ops: FileOps, plan: list[CopyPlanItem],
-                 kind: str, total_bytes: int) -> None:
+                 kind: str) -> None:
         super().__init__()
         self._file_ops = file_ops
         self._plan = plan
         self._kind = kind
-        self._total = total_bytes
+        # 総バイト数は run() 冒頭にワーカースレッドで算出する。GUI スレッドで
+        # os.walk すると進捗バーが出る前に UI が固まるため（算出完了までは
+        # total=0 を emit し、GUI 側は不定プログレスで表示する）。
+        self._total = 0
         self._done = 0
         self._cancel = threading.Event()
         self._last_emit = 0.0
@@ -60,6 +63,10 @@ class CopyWorker(QObject):
     def run(self) -> None:
         """QThread.started から呼ばれる本体。"""
         try:
+            # 総バイト数の算出（進捗バーの分母）。キャンセル可能。
+            self.progress.emit(0, 0, self._current_name())
+            self._total = total_size([item.src for item in self._plan],
+                                     should_cancel=self._should_cancel)
             # アイテム境界で名前を更新しつつ run_plan に流す。
             record = OpRecord(kind=self._kind)
             for i, item in enumerate(self._plan):

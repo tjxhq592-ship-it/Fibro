@@ -38,10 +38,14 @@ class TestDropHandling:
 
         window = MainWindow()
         window._on_files_dropped([str(src / "f.txt")], str(dst), False)
-        assert (dst / "f.txt").exists()
+        # 移動はワーカースレッドで実行される。完了処理（履歴登録）まで待つ。
+        assert _wait_for(lambda: (dst / "f.txt").exists())
+        assert _wait_for(lambda: window._op_thread is None)
         assert not (src / "f.txt").exists()
         window.undo_last()
-        assert (src / "f.txt").exists()
+        # Undo も非同期実行になったため完了を待つ
+        assert _wait_for(lambda: (src / "f.txt").exists())
+        assert _wait_for(lambda: window._op_thread is None)
         window.close()
 
     def test_drop_copy_with_ctrl(self, qapp, tmp_path):
@@ -53,7 +57,9 @@ class TestDropHandling:
 
         window = MainWindow()
         window._on_files_dropped([str(src / "f.txt")], str(dst), True)
-        assert (dst / "f.txt").exists()
+        # コピーはワーカースレッドで実行されるため完了を待つ
+        assert _wait_for(lambda: (dst / "f.txt").exists())
+        assert _wait_for(lambda: window._op_thread is None)
         assert (src / "f.txt").exists()  # コピーなので元が残る
         window.close()
 

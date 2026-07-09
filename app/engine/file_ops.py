@@ -23,11 +23,31 @@ def _send2trash(path: str) -> None:
     send2trash(path)
 
 
+def _remove_permanent(path: str) -> None:
+    """1 件をゴミ箱を経由せず完全削除する。
+
+    ディレクトリは再帰削除。シンボリックリンクはリンク自体のみ消し、
+    リンク先を巻き込まない（Windows のディレクトリリンクは rmdir で消す）。
+    """
+    ep = extend(path)
+    if os.path.islink(ep):
+        try:
+            os.remove(ep)
+        except OSError:
+            os.rmdir(ep)
+    elif os.path.isdir(ep):
+        shutil.rmtree(ep)
+    else:
+        os.remove(ep)
+
+
 # 衝突解決の戻り値: "overwrite" | "skip" | "rename" | "cancel"
 Resolver = Callable[[Path, Path], str]
 
 # 進捗コールバック: コピーしたバイト数の増分を受け取る。
 OnBytes = Callable[[int], None]
+# 件数ベースの進捗コールバック: (処理済み件数, 現在処理中の名前) を受け取る。
+OnItem = Callable[[int, str], None]
 # キャンセル判定: True を返したら中断する。
 ShouldCancel = Callable[[], bool]
 
@@ -36,17 +56,23 @@ class _Cancelled(Exception):
     """衝突解決でユーザーが中止を選んだことを表す内部シグナル。"""
 
 
-def total_size(sources: list[str | Path]) -> int:
+def total_size(sources: list[str | Path],
+               should_cancel: ShouldCancel | None = None) -> int:
     """ファイル/ディレクトリの総バイト数（進捗バーの分母）。
 
     走査失敗（権限・到達不可）は 0 として無視し、例外を漏らさない。
+    should_cancel が True を返したら走査を打ち切り、それまでの合計を返す。
     """
     total = 0
     for src in sources:
+        if should_cancel is not None and should_cancel():
+            return total
         p = Path(src)
         try:
             if p.is_dir():
                 for root, _dirs, files in os.walk(extend(p)):
+                    if should_cancel is not None and should_cancel():
+                        return total
                     for name in files:
                         try:
                             total += os.path.getsize(os.path.join(root, name))
@@ -304,30 +330,87 @@ class FileOps:
         self._history.append(record)
         return record
 
-    def delete(self, sources: list[str | Path]) -> OpRecord:
+    @staticmethod
+    def run_delete(sources: list[str | Path], *, permanent: bool = False,
+                   on_item: OnItem | None = None,
+                   should_cancel: ShouldCancel | None = None) -> OpRecord:
+        """削除を実行する（ワーカースレッド可。履歴には積まない）。
+
+        permanent=False はゴミ箱へ、True は完全削除。キャンセル時は
+        それまでに削除できた分だけ pairs に残して返す。履歴への追加は
+        GUI スレッド側で add_record を呼ぶ（run_plan と同じ分担）。
+        """
         record = OpRecord(kind="delete")
-        for src in map(Path, sources):
-            _send2trash(str(src))
+        for i, src in enumerate(map(Path, sources)):
+            if should_cancel is not None and should_cancel():
+                break
+            if on_item is not None:
+                on_item(i, src.name)
+            if permanent:
+                _remove_permanent(str(src))
+            else:
+                _send2trash(str(src))
             record.pairs.append((str(src), ""))
+        return record
+
+    def delete(self, sources: list[str | Path]) -> OpRecord:
+        """ゴミ箱へ移動する（同期版）。"""
+        record = self.run_delete(sources)
         self._history.append(record)
         return record
 
+    def delete_permanent(self, sources: list[str | Path]) -> int:
+        """ゴミ箱を経由せず完全削除し、削除件数を返す（同期版）。
+
+        元に戻せないため履歴には積まない。
+        """
+        return len(self.run_delete(sources, permanent=True).pairs)
+
+    def peek_undo(self) -> OpRecord | None:
+        """取り消し対象（直近の move/copy）を返す。履歴からは外さない。"""
+        for record in reversed(self._history):
+            if record.kind in ("move", "copy"):
+                return record
+        return None
+
+    def discard_record(self, record: OpRecord) -> None:
+        """取り消し完了後に履歴から取り除く（GUI スレッドから呼ぶ）。"""
+        try:
+            self._history.remove(record)
+        except ValueError:
+            pass
+
+    @staticmethod
+    def apply_undo(record: OpRecord, on_item: OnItem | None = None,
+                   should_cancel: ShouldCancel | None = None) -> None:
+        """record の逆操作を実行する（ワーカースレッド可。履歴は触らない）。
+
+        should_cancel はアプリ終了時の合流用（通常操作では中断しない）。
+        """
+        if record.kind == "move":
+            for i, (src, dest) in enumerate(reversed(record.pairs)):
+                if should_cancel is not None and should_cancel():
+                    return
+                if on_item is not None:
+                    on_item(i, Path(dest).name)
+                shutil.move(extend(dest), extend(src))
+        elif record.kind == "copy":
+            for i, (_, dest) in enumerate(reversed(record.pairs)):
+                if should_cancel is not None and should_cancel():
+                    return
+                p = Path(dest)
+                if on_item is not None:
+                    on_item(i, p.name)
+                if p.is_dir():
+                    shutil.rmtree(extend(p))
+                elif p.exists():
+                    p.unlink()
+
     def undo(self) -> OpRecord:
-        """直近の move/copy を取り消す（delete はゴミ箱から手動復元）。"""
-        for idx in range(len(self._history) - 1, -1, -1):
-            record = self._history[idx]
-            if record.kind == "move":
-                for src, dest in reversed(record.pairs):
-                    shutil.move(extend(dest), extend(src))
-                del self._history[idx]
-                return record
-            if record.kind == "copy":
-                for _, dest in reversed(record.pairs):
-                    p = Path(dest)
-                    if p.is_dir():
-                        shutil.rmtree(extend(p))
-                    elif p.exists():
-                        p.unlink()
-                del self._history[idx]
-                return record
-        raise RuntimeError("取り消せる操作がありません")
+        """直近の move/copy を取り消す（同期版。delete はゴミ箱から手動復元）。"""
+        record = self.peek_undo()
+        if record is None:
+            raise RuntimeError("取り消せる操作がありません")
+        self.apply_undo(record)
+        self.discard_record(record)
+        return record

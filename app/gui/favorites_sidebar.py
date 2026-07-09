@@ -41,6 +41,27 @@ class _ReachJob(QRunnable):
                        reachable(path, require_dir=not is_file))
 
 
+class _ActivateJob(QRunnable):
+    """クリックされたお気に入りの到達性をバックグラウンドで確認する。
+
+    is_reachable() は切断中のネットワーク/クラウドパスで最大2秒ブロック
+    するため GUI スレッドでは呼ばず、結果を emit(gen, ok) で返してから
+    遷移（または警告）する。
+    """
+
+    def __init__(self, path: str, is_file: bool, gen: int, emit) -> None:
+        super().__init__()
+        self._path = path
+        self._is_file = is_file
+        self._gen = gen
+        self._emit = emit
+
+    def run(self) -> None:
+        from app.netpath import reachable
+        self._emit(self._gen,
+                   reachable(self._path, require_dir=not self._is_file))
+
+
 class _FavTree(QTreeWidget):
     """ドロップ完了を通知する QTreeWidget。
 
@@ -90,15 +111,19 @@ class FavoritesSidebar(QWidget):
     path_selected = Signal(str)              # フォルダのお気に入り → フォルダへ移動
     file_activated = Signal(str)             # ファイルのお気に入り → 既定アプリで開く
     _reach_checked = Signal(int, str, bool)  # gen, fav_id, reachable
+    _activate_checked = Signal(int, bool)    # gen, reachable（クリック時の確認）
 
     def __init__(self, store: FavoriteStore, parent=None) -> None:
         super().__init__(parent)
         self._store = store
         self._reach_gen = 0                 # 到達性チェックの世代
+        self._activate_gen = 0              # クリック時確認の世代（連打対策）
+        self._pending_activation = None     # (fav, as_file) 確認結果待ちの1件
         self._items_by_id: dict[str, QTreeWidgetItem] = {}
         # refresh() でのツリー再構築中は itemExpanded/itemCollapsed を無視する
         self._restoring = False
         self._reach_checked.connect(self._apply_reachability)
+        self._activate_checked.connect(self._apply_activation)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -373,8 +398,25 @@ class FavoritesSidebar(QWidget):
             self._activate(fav, as_file=True)
 
     def _activate(self, fav, *, as_file: bool) -> None:
-        """到達性を確認したうえで、ファイルは開く／フォルダは移動を要求する。"""
-        if not fav.is_reachable():
+        """到達性を確認したうえで、ファイルは開く／フォルダは移動を要求する。
+
+        is_reachable() は切断中のネットワークパスで最大2秒ブロックするため
+        バックグラウンドで確認し、結果が返ってから遷移か警告を出す
+        （_ReachJob と同じパターン。世代カウンタで連打時は最後の1件のみ有効）。
+        """
+        self._activate_gen += 1
+        self._pending_activation = (fav, as_file)
+        QThreadPool.globalInstance().start(_ActivateJob(
+            fav.path, fav.is_file, self._activate_gen,
+            self._activate_checked.emit))
+
+    def _apply_activation(self, gen: int, ok: bool) -> None:
+        """非同期の到達性確認の結果を受けて遷移/警告する（GUI スレッド）。"""
+        if gen != self._activate_gen or self._pending_activation is None:
+            return  # 古い結果は破棄
+        fav, as_file = self._pending_activation
+        self._pending_activation = None
+        if not ok:
             QMessageBox.warning(
                 self, _("fav_unreachable_title"),
                 _("fav_unreachable_msg").format(path=fav.path))

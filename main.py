@@ -2,6 +2,30 @@
 import sys
 
 
+def _install_excepthook() -> None:
+    """未捕捉例外を CONFIG_DIR/error.log へ追記する。
+
+    PySide6 のスロット内例外は既定では sys.excepthook に流れるだけで、
+    ユーザーには「何も起きない」ように見えて原因が残らない。ログへ
+    書き出して調査可能にする（既定のフックにも流して挙動は変えない）。
+    """
+    import traceback
+    from datetime import datetime
+
+    from app.paths import CONFIG_DIR
+
+    def hook(exc_type, exc, tb) -> None:
+        try:
+            with open(CONFIG_DIR / "error.log", "a", encoding="utf-8") as f:
+                f.write(f"\n[{datetime.now():%Y-%m-%d %H:%M:%S}]\n")
+                traceback.print_exception(exc_type, exc, tb, file=f)
+        except OSError:
+            pass
+        sys.__excepthook__(exc_type, exc, tb)
+
+    sys.excepthook = hook
+
+
 def main() -> int:
     incoming = sys.argv[1:]  # 開きたいフォルダ（省略可）
 
@@ -26,6 +50,8 @@ def main() -> int:
     # default_project_settings.json へ移す（初回起動時のみ・冪等）。
     # MainWindow が settings.json を読む前に必ず実行する。
     migrate_default_project_settings(CONFIG_DIR)
+
+    _install_excepthook()
 
     app = QApplication(sys.argv)
     app.setApplicationName("Fibro")

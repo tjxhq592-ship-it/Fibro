@@ -284,11 +284,32 @@ class _OpenFileJob(QRunnable):
                 self._on_fail(self._path, str(e))
 
 
+class _DiskUsageJob(QRunnable):
+    """ドライブ空き容量の取得をバックグラウンドで行う。
+
+    safe_disk_usage 自体にタイムアウトはあるが、future.result() を GUI
+    スレッドで待つと切断中のネットワークドライブで最大2秒固まるため、
+    待つのもワーカーで行い、結果を emit(gen, usage) で返す。
+    """
+
+    def __init__(self, path: str, gen: int, emit) -> None:
+        super().__init__()
+        self._path = path
+        self._gen = gen
+        self._emit = emit
+
+    def run(self) -> None:
+        from app.netpath import safe_disk_usage
+        self._emit(self._gen, safe_disk_usage(self._path))
+
+
 class MainWindow(QMainWindow):
     # 選択サイズ合計の非同期計算結果（gen, 合計バイト）
     _size_computed = Signal(int, int)
     # ファイルを開くのに失敗（path, エラー文）
     _open_failed = Signal(str, str)
+    # 空き容量の非同期取得結果（gen, (free, total) | None）
+    _disk_usage_ready = Signal(int, object)
 
     def __init__(self) -> None:
         super().__init__()
@@ -298,6 +319,9 @@ class MainWindow(QMainWindow):
         self._sel_count = 0          # 直近の選択件数
         self._size_computed.connect(self._apply_selection_size)
         self._open_failed.connect(self._on_open_failed)
+        self._disk_gen = 0           # 空き容量表示の世代（古い結果を破棄）
+        self._disk_path = ""         # 直近に空き容量を要求したパス
+        self._disk_usage_ready.connect(self._apply_disk_usage)
 
         self.rename_executor = RenameExecutor()
         self.file_ops = FileOps()
@@ -309,9 +333,12 @@ class MainWindow(QMainWindow):
         self.recent_store = RecentStore(CONFIG_DIR / "recent.json")
         self.theme_manager = ThemeManager(CONFIG_DIR / "settings.json")
         self._clipboard: tuple[str, list[str]] | None = None  # ("copy"|"cut", paths)
-        # 実行中のコピー/移動（非同期）。実行中のみ非 None。
-        self._copy_thread = None
-        self._copy_worker = None
+        # 実行中のファイル操作（コピー/移動/削除/Undo、非同期）。実行中のみ非 None。
+        self._op_thread = None
+        self._op_worker = None
+        self._op_label_key = "copy_progress"  # 進捗ラベルの i18n キー
+        self._op_cancellable = True           # キャンセルボタンを出すか
+        self._op_cancelled = False
 
         # --- ペイン（タブ＝主ペイン群 + デュアル用サブペイン） ---
         self._tabs: list[FilePane] = []        # タブ順に並ぶ主ペイン
@@ -944,7 +971,7 @@ class MainWindow(QMainWindow):
     def _switch_project(self, project_id: str | None) -> None:
         if project_id == self.project_manager.active_project_id:
             return
-        if self._copy_thread is not None:
+        if self._op_thread is not None:
             QMessageBox.warning(self, _("project_switch_blocked_title"),
                                 _("project_switch_blocked_msg"))
             return
@@ -1178,13 +1205,26 @@ class MainWindow(QMainWindow):
         self._update_tab_title(self._active_pane)
 
     def _update_disk_usage(self, path: str) -> None:
-        """カレントフォルダがあるドライブの空き容量を表示（NWはタイムアウト付き）。"""
-        from app.netpath import safe_disk_usage
-        usage = safe_disk_usage(path)
+        """カレントのドライブ空き容量を非同期で取得して表示する。
+
+        切断中のネットワークドライブでは取得が最大2秒待たされるため、
+        navigate() を固めないよう QRunnable で取得し、世代カウンタで
+        古い結果を破棄する（_SelectionSizeJob と同じパターン）。
+        """
+        self._disk_gen += 1
+        self._disk_path = path
+        QThreadPool.globalInstance().start(
+            _DiskUsageJob(path, self._disk_gen, self._disk_usage_ready.emit))
+
+    def _apply_disk_usage(self, gen: int, usage) -> None:
+        """非同期取得した空き容量をラベルへ反映（GUI スレッド）。"""
+        if gen != self._disk_gen:
+            return  # 古い結果は破棄
         if usage is None:
             self.disk_label.setText("")
             return
         free, total = usage
+        path = self._disk_path
         drive = os.path.splitdrive(str(Path(path)))[0] or str(Path(path).anchor)
         self.disk_label.setText(_("drive_free").format(
             drive=drive, free=_human_size(free), total=_human_size(total)))
@@ -1510,7 +1550,7 @@ class MainWindow(QMainWindow):
 
     def paste_clipboard(self) -> None:
         # システムクリップボードから読む（エクスプローラーでコピーした物も貼れる）
-        if self._copy_thread is not None:
+        if self._op_thread is not None:
             self.statusBar().showMessage(_("copy_busy"), 4000)
             return
         from app import clipboard_files
@@ -1529,7 +1569,7 @@ class MainWindow(QMainWindow):
 
     def _on_files_dropped(self, paths: list, dest: str, copy: bool) -> None:
         """D&D: 既定は移動、Ctrl押下でコピー。どちらも Undo 可（非同期実行）。"""
-        if self._copy_thread is not None:
+        if self._op_thread is not None:
             self.statusBar().showMessage(_("copy_busy"), 4000)
             return
         from app.gui.conflict_dialog import make_resolver
@@ -1552,69 +1592,86 @@ class MainWindow(QMainWindow):
                 return
         self._start_copy_operation(plan, "copy" if copy else "move")
 
-    # ---- 非同期コピー/移動（進捗バー付き） ----
-    def _start_copy_operation(self, plan: list, kind: str,
-                              clear_clipboard: bool = False) -> None:
-        """build_plan の計画をワーカースレッドで実行し、下部に進捗を表示する。"""
-        if not plan:
-            return
-        if self._copy_thread is not None:
-            self.statusBar().showMessage(_("copy_busy"), 4000)
-            return
-        from app.engine.file_ops import total_size
-        from app.gui.copy_worker import CopyWorker
-        total = total_size([item.src for item in plan])
+    # ---- 非同期ファイル操作（コピー/移動/削除/Undo、進捗バー付き） ----
+    def _start_op_worker(self, worker, label_key: str, on_finished,
+                         cancellable: bool = True) -> None:
+        """ワーカーを QThread に載せて開始し、下部に進捗を表示する共通処理。
 
-        self._copy_kind = kind
-        self._copy_clear_clipboard = clear_clipboard
-        self._copy_cancelled = False
-
-        worker = CopyWorker(self.file_ops, plan, kind, total)
+        呼び出し側は事前に self._op_thread が None であることを確認する。
+        worker は progress(done, total, name) / finished(result, error) を持つこと。
+        """
+        self._op_label_key = label_key
+        self._op_cancellable = cancellable
+        self._op_cancelled = False
         thread = QThread(self)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.progress.connect(self._update_progress)
-        worker.finished.connect(self._on_copy_finished)
-        self._copy_worker = worker
-        self._copy_thread = thread
+        worker.finished.connect(on_finished)
+        self._op_worker = worker
+        self._op_thread = thread
         thread.start()
         # 一瞬で終わる操作のちらつきを避け、200ms 後にまだ実行中なら表示する。
         QTimer.singleShot(200, self._maybe_show_progress)
 
+    def _finish_op_thread(self) -> None:
+        """完了シグナル受信後のスレッド合流と進捗 UI の後片付け。"""
+        thread = self._op_thread
+        if thread is not None:
+            thread.quit()
+            thread.wait(3000)
+            thread.deleteLater()
+        self._op_thread = None
+        self._op_worker = None  # 参照を落として GC に任せる
+        self.progress_label.hide()
+        self.progress_bar.hide()
+        self.cancel_btn.hide()
+
+    def _start_copy_operation(self, plan: list, kind: str,
+                              clear_clipboard: bool = False) -> None:
+        """build_plan の計画をワーカースレッドで実行し、下部に進捗を表示する。
+
+        総バイト数の算出もワーカー側で行う（GUI で os.walk すると大量
+        ファイル時に進捗バーが出る前に固まるため）。
+        """
+        if not plan:
+            return
+        if self._op_thread is not None:
+            self.statusBar().showMessage(_("copy_busy"), 4000)
+            return
+        from app.gui.copy_worker import CopyWorker
+        self._copy_kind = kind
+        self._copy_clear_clipboard = clear_clipboard
+        label_key = "move_progress" if kind == "move" else "copy_progress"
+        self._start_op_worker(CopyWorker(self.file_ops, plan, kind),
+                              label_key, self._on_copy_finished)
+
     def _maybe_show_progress(self) -> None:
-        if self._copy_worker is not None:  # まだ実行中
+        if self._op_worker is not None:  # まだ実行中
             self.progress_label.show()
             self.progress_bar.show()
-            self.cancel_btn.show()
+            if self._op_cancellable:
+                self.cancel_btn.show()
 
     def _update_progress(self, done: int, total: int, name: str) -> None:
-        if self._copy_worker is None:
+        if self._op_worker is None:
             return
         if total > 0:
             self.progress_bar.setRange(0, 1000)
             self.progress_bar.setValue(min(1000, int(done / total * 1000)))
             self.progress_bar.setFormat("%p%")
         else:
-            self.progress_bar.setRange(0, 0)  # 不定（同一ドライブ移動など）
-        key = "move_progress" if self._copy_kind == "move" else "copy_progress"
-        self.progress_label.setText(_(key).format(name=name))
+            self.progress_bar.setRange(0, 0)  # 不定（総量算出中・同一ドライブ移動など）
+        self.progress_label.setText(_(self._op_label_key).format(name=name))
 
     def _cancel_copy_operation(self) -> None:
-        if self._copy_worker is not None:
-            self._copy_cancelled = True
-            self._copy_worker.cancel()
+        worker = self._op_worker
+        if worker is not None and hasattr(worker, "cancel"):
+            self._op_cancelled = True
+            worker.cancel()
 
     def _on_copy_finished(self, record, error) -> None:
-        thread = self._copy_thread
-        if thread is not None:
-            thread.quit()
-            thread.wait(3000)
-            thread.deleteLater()
-        self._copy_thread = None
-        self._copy_worker = None  # 参照を落として GC に任せる
-        self.progress_label.hide()
-        self.progress_bar.hide()
-        self.cancel_btn.hide()
+        self._finish_op_thread()
 
         if record is not None and record.pairs:
             self.file_ops.add_record(record)
@@ -1627,7 +1684,7 @@ class MainWindow(QMainWindow):
         if error:
             QMessageBox.critical(self, _("dlg_paste_fail"), str(error))
             return
-        if self._copy_cancelled:
+        if self._op_cancelled:
             self.statusBar().showMessage(_("copy_cancelled"), 4000)
         else:
             verb = _("kind_move" if self._copy_kind == "move"
@@ -1661,6 +1718,9 @@ class MainWindow(QMainWindow):
         paths = self.selected_paths()
         if not paths:
             return
+        if self._op_thread is not None:
+            self.statusBar().showMessage(_("copy_busy"), 4000)
+            return
         names = "\n".join(Path(p).name for p in paths[:10])
         if len(paths) > 10:
             names += f"\n… 他{len(paths) - 10}件"
@@ -1669,17 +1729,15 @@ class MainWindow(QMainWindow):
             _("dlg_trash_msg").format(n=len(paths), names=names))
         if answer != QMessageBox.StandardButton.Yes:
             return
-        try:
-            self.file_ops.delete(paths)
-            self.statusBar().showMessage(
-                _("trashed_n").format(n=len(paths)), 3000)
-        except OSError as e:
-            QMessageBox.critical(self, _("dlg_trash_fail"), str(e))
+        self._start_delete_operation(paths, permanent=False)
 
     def delete_selected_permanent(self) -> None:
         """Shift+Delete: ゴミ箱を経由せず完全削除（元に戻せない）。"""
         paths = self.selected_paths()
         if not paths:
+            return
+        if self._op_thread is not None:
+            self.statusBar().showMessage(_("copy_busy"), 4000)
             return
         names = "\n".join(Path(p).name for p in paths[:10])
         if len(paths) > 10:
@@ -1691,11 +1749,39 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.No)
         if answer != QMessageBox.StandardButton.Yes:
             return
-        try:
-            n = self.file_ops.delete_permanent(paths)
-            self.statusBar().showMessage(_("deleted_n").format(n=n), 3000)
-        except OSError as e:
-            QMessageBox.critical(self, _("dlg_delete_fail"), str(e))
+        self._start_delete_operation(paths, permanent=True)
+
+    def _start_delete_operation(self, paths: list, permanent: bool) -> None:
+        """削除をワーカースレッドで実行する（件数ベースの進捗・キャンセル可能）。
+
+        send2trash / rmtree は大量選択やネットワークドライブで数秒かかる
+        ことがあり、GUI スレッドで回すと固まるため CopyWorker と同じ
+        パターンで非同期化する。
+        """
+        if self._op_thread is not None:
+            self.statusBar().showMessage(_("copy_busy"), 4000)
+            return
+        from app.gui.op_workers import DeleteWorker
+        self._delete_permanent = permanent
+        label_key = "delete_progress" if permanent else "trash_progress"
+        self._start_op_worker(DeleteWorker(self.file_ops, paths, permanent),
+                              label_key, self._on_delete_finished)
+
+    def _on_delete_finished(self, record, error) -> None:
+        self._finish_op_thread()
+        # ゴミ箱移動は従来どおり履歴へ（完全削除は元に戻せないため積まない）
+        if record is not None and record.pairs and not self._delete_permanent:
+            self.file_ops.add_record(record)
+        if error:
+            key = "dlg_delete_fail" if self._delete_permanent else "dlg_trash_fail"
+            QMessageBox.critical(self, _(key), str(error))
+            return
+        if self._op_cancelled:
+            self.statusBar().showMessage(_("copy_cancelled"), 4000)
+            return
+        n = len(record.pairs) if record is not None else 0
+        key = "deleted_n" if self._delete_permanent else "trashed_n"
+        self.statusBar().showMessage(_(key).format(n=n), 3000)
 
     def show_properties(self) -> None:
         paths = self.selected_paths()
@@ -2085,6 +2171,15 @@ class MainWindow(QMainWindow):
         self._save_layout()
         if self.search_panel is not None:
             self.search_panel.cancel_search()
+        # 実行中のファイル操作ワーカーがあれば中断して合流する。走行中の
+        # QThread が親子カスケードで C++ 側から破棄されると qFatal で
+        # abort するため（検索キャンセルのクラッシュと同根）。
+        if self._op_thread is not None:
+            worker = self._op_worker
+            if worker is not None and hasattr(worker, "cancel"):
+                worker.cancel()
+            self._op_thread.quit()
+            self._op_thread.wait(3000)
         super().closeEvent(event)
 
     # ---- リネーム / Undo ----
@@ -2115,13 +2210,28 @@ class MainWindow(QMainWindow):
             except (OSError, RuntimeError) as e:
                 QMessageBox.critical(self, _("undo_failed"), str(e))
         elif self.file_ops.can_undo:
-            try:
-                record = self.file_ops.undo()
-                kind = _("kind_move" if record.kind == "move" else "kind_copy")
-                self.statusBar().showMessage(
-                    _("undo_move_done").format(
-                        kind=kind, n=len(record.pairs)), 3000)
-            except (OSError, RuntimeError) as e:
-                QMessageBox.critical(self, _("undo_failed"), str(e))
+            # 大きな移動/コピーの取り消しは進めるときと同じだけ時間がかかる
+            # ため、ワーカースレッドで実行する（履歴からの除去は成功後）。
+            if self._op_thread is not None:
+                self.statusBar().showMessage(_("copy_busy"), 4000)
+                return
+            record = self.file_ops.peek_undo()
+            if record is None:
+                self.statusBar().showMessage(_("undo_none"), 3000)
+                return
+            from app.gui.op_workers import UndoWorker
+            self._start_op_worker(UndoWorker(record), "undo_progress",
+                                  self._on_undo_finished, cancellable=False)
         else:
             self.statusBar().showMessage(_("undo_none"), 3000)
+
+    def _on_undo_finished(self, record, error) -> None:
+        self._finish_op_thread()
+        if error:
+            # 失敗時は履歴に残す（部分的に戻っていても再試行の余地を残す）
+            QMessageBox.critical(self, _("undo_failed"), str(error))
+            return
+        self.file_ops.discard_record(record)
+        kind = _("kind_move" if record.kind == "move" else "kind_copy")
+        self.statusBar().showMessage(
+            _("undo_move_done").format(kind=kind, n=len(record.pairs)), 3000)
