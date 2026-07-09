@@ -115,6 +115,10 @@ class SearchPanel(QWidget):
     def __init__(self, parent=None, settings=None) -> None:
         super().__init__(parent)
         self._worker: SearchWorker | None = None
+        # wait() に間に合わなかったワーカーの延命リスト。親から切り離した上で
+        # Python 参照を保持しないと、走行中に C++ 側が破棄されて qFatal で落ちる
+        # （docs/investigation/search_cancel_crash_report.md）
+        self._retired: list[SearchWorker] = []
         self._root = str(Path.home())
         # settings は ThemeManager 互換オブジェクト（get/set）。
         # 共有することで settings.json の単一ライターを保証する。
@@ -254,16 +258,32 @@ class SearchPanel(QWidget):
     def cancel_search(self) -> None:
         self._flush_timer.stop()
         self._pending.clear()
-        if self._worker is not None:
-            self._worker.cancel()
-            try:
-                self._worker.hits_batch.disconnect(self._on_hits_batch)
-                self._worker.finished_ok.disconnect(self._on_finished)
-                self._worker.status.disconnect(self.status_label.setText)
-            except (RuntimeError, TypeError):
-                pass
-            self._worker.finished.connect(self._worker.deleteLater)
-        self._worker = None
+        worker, self._worker = self._worker, None
+        if worker is None:
+            return
+        worker.cancel()
+        try:
+            worker.hits_batch.disconnect(self._on_hits_batch)
+            worker.finished_ok.disconnect(self._on_finished)
+            worker.status.disconnect(self.status_label.setText)
+        except (RuntimeError, TypeError):
+            pass
+        # 合流してから破棄する。走行中の QThread が親子カスケードで破棄されると
+        # Qt が qFatal（Destroyed while thread is still running）で abort する。
+        # cancel フラグは走査ループ先頭で効くため通常は数十 ms で返る
+        if worker.wait(2000):
+            worker.deleteLater()
+        else:
+            # タイムアウト時の保険: 親から切り離して panel 破棄の道連れを防ぎ、
+            # 参照を保持して終了時に自壊させる
+            worker.setParent(None)
+            self._retired.append(worker)
+            worker.finished.connect(lambda w=worker: self._reap(w))
+
+    def _reap(self, worker: SearchWorker) -> None:
+        if worker in self._retired:
+            self._retired.remove(worker)
+        worker.deleteLater()
 
     # ---- 結果 ----
     def _on_hits_batch(self, hits: list) -> None:

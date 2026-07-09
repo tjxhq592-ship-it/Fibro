@@ -1,17 +1,15 @@
-"""検索キャンセル直後のパネル破棄でネイティブクラッシュする既知バグの再現テスト。
+"""検索キャンセル直後のパネル破棄がネイティブクラッシュしないことの回帰テスト。
 
 調査レポート: docs/investigation/search_cancel_crash_report.md
 
-クラッシュは Qt の qFatal（QThread: Destroyed while thread is still running）
-→ abort でプロセスごと落ちる（Windows では exit 0xC0000409）。同一プロセスで
-実行するとスイート全体が道連れになるため、子プロセスで再現し exit code で判定する。
+修正前は Qt の qFatal（QThread: Destroyed while thread is still running）
+→ abort でプロセスごと落ちていた（Windows では exit 0xC0000409）。再発時に
+スイートを道連れにしないよう、子プロセスで実行し exit code で判定する。
 """
 import os
 import subprocess
 import sys
 from pathlib import Path
-
-import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -46,13 +44,6 @@ print("SURVIVED", flush=True)
 """
 
 
-@pytest.mark.xfail(
-    reason="既知バグ: cancel 直後に SearchPanel が破棄されると、親子カスケードで"
-           "走行中の子 QThread が C++ 側で破棄され qFatal で abort する。"
-           "タイミング依存で稀に生き残るため strict=False。"
-           "詳細: docs/investigation/search_cancel_crash_report.md",
-    strict=False,
-)
 def test_cancel_then_destroy_does_not_crash():
     env = dict(os.environ,
                QT_QPA_PLATFORM="offscreen",
