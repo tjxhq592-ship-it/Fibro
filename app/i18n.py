@@ -331,6 +331,7 @@ _STRINGS: dict[str, dict[str, str]] = {
     "project_delete_title": {"ja": "プロジェクトを削除",  "en": "Delete Project"},
     "project_delete_msg":   {"ja": "「{name}」を削除しますか?\n\nこのプロジェクトのお気に入り・タブ・テーマ・クイックアクセス設定・リネームプリセットは全て削除されます。",
                              "en": "Delete \"{name}\"?\n\nAll favorites, tabs, theme, quick-access settings and rename presets of this project will be deleted."},
+    "project_none":         {"ja": "(プロジェクトなし)",  "en": "(No Project)"},
     "project_switch_blocked_title": {"ja": "プロジェクト切替", "en": "Switch Project"},
     "project_switch_blocked_msg":   {"ja": "ファイルのコピー/移動を実行中のため、プロジェクトを切り替えられません。\n完了後にもう一度お試しください。",
                                      "en": "Cannot switch projects while a file copy/move is in progress.\nPlease try again after it completes."},
@@ -367,6 +368,7 @@ _STRINGS: dict[str, dict[str, str]] = {
     "sc_switch_pane":     {"ja": "ペイン切替",          "en": "Switch Pane"},
     "sc_toggle_view":     {"ja": "詳細／サムネイル切替", "en": "Detail / Thumbnail"},
     "sc_quick_preview":   {"ja": "クイックプレビュー",  "en": "Quick Preview"},
+    "sc_switch_project":  {"ja": "プロジェクト切替（上位5件）", "en": "Switch Project (Top 5)"},
 }
 
 

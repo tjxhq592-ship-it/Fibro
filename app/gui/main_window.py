@@ -79,6 +79,7 @@ SHORTCUTS: list[tuple[str, list[tuple[str, str]]]] = [
         ("Ctrl+T", "sc_new_tab"),
         ("Ctrl+W", "sc_close_tab"),
         ("Ctrl+Tab / Ctrl+Shift+Tab", "sc_switch_tab"),
+        ("Alt+1〜5", "sc_switch_project"),
         ("F9", "sc_dual_pane"),
         ("F6", "sc_switch_pane"),
         ("Ctrl+Shift+T", "sc_toggle_view"),
@@ -433,6 +434,17 @@ class MainWindow(QMainWindow):
         self.project_menu_btn.setAutoRaise(True)
         self.project_menu_btn.clicked.connect(self._show_project_menu)
         top.addWidget(self.project_menu_btn)
+        # メニューボタンとパンくずの間: 現在プロジェクト名（クリックで切替メニュー）
+        self.project_name_btn = QToolButton()
+        self.project_name_btn.setObjectName("projectNameBtn")
+        self.project_name_btn.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.project_name_btn.setAutoRaise(True)
+        self.project_name_btn.clicked.connect(
+            lambda checked=False: self._show_project_menu(
+                anchor=self.project_name_btn))
+        top.addWidget(self.project_name_btn)
+        self._update_project_button()
         self.breadcrumb = BreadcrumbBar()
         self.breadcrumb.path_selected.connect(self.navigate)
         top.addWidget(self.breadcrumb, stretch=1)
@@ -905,12 +917,19 @@ class MainWindow(QMainWindow):
         self.preset_store = RenamePresetStore(paths["rename_presets"])
         self.project_settings = ProjectSettingsStore(paths["project_settings"])
 
-    def _show_project_menu(self) -> None:
-        """メニューボタン: プロジェクト一覧＋作成/管理をポップアップ表示。"""
+    def _show_project_menu(self, checked=False, anchor=None) -> None:
+        """メニューボタン/プロジェクト名ボタン: プロジェクト一覧＋作成/管理を
+        ポップアップ表示。anchor で表示位置の基準ボタンを指定できる。
+
+        上位5件には Alt+N を併記する。実際のキー処理は _build_actions の
+        QAction 側に一本化しており、ここでは表示のみ（テキストの \t 以降は
+        QMenu がショートカット欄として右寄せ描画する）。
+        """
         menu = QMenu(self)
         active = self.project_manager.active_project_id
-        for proj in self.project_manager.projects:
-            action = menu.addAction(proj.name)
+        for i, proj in enumerate(self.project_manager.projects):
+            label = f"{proj.name}\tAlt+{i + 1}" if i < 5 else proj.name
+            action = menu.addAction(label)
             action.setCheckable(True)
             action.setChecked(proj.id == active)
             action.triggered.connect(
@@ -919,9 +938,8 @@ class MainWindow(QMainWindow):
             menu.addSeparator()
         menu.addAction(_("project_menu_new"), self._new_project)
         menu.addAction(_("project_menu_manage"), self._manage_projects)
-        pos = self.project_menu_btn.mapToGlobal(
-            self.project_menu_btn.rect().bottomLeft())
-        menu.exec(pos)
+        btn = anchor if anchor is not None else self.project_menu_btn
+        menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
 
     def _new_project(self) -> None:
         """新規プロジェクト作成。作成方法（コピー/空）→名前の順に確認する。"""
@@ -968,6 +986,41 @@ class MainWindow(QMainWindow):
             if src[key].exists():
                 shutil.copy2(src[key], dst[key])
 
+    # プロジェクト名ボタンの最大テキスト幅（超過分はエリジオン表示）
+    _PROJECT_NAME_MAX_PX = 160
+
+    def _update_project_button(self) -> None:
+        """トップバーの現在プロジェクト名表示を最新化する。
+
+        切替・リネーム・削除・並び替えの後に呼ぶ。未選択（デフォルト
+        プロジェクト）時は控えめな色（QSS の noProject ルール）で表示する。
+        """
+        active = self.project_manager.active
+        name = active.name if active is not None else _("project_none")
+        fm = self.project_name_btn.fontMetrics()
+        self.project_name_btn.setText(fm.elidedText(
+            name, Qt.TextElideMode.ElideRight, self._PROJECT_NAME_MAX_PX))
+        self.project_name_btn.setToolTip(
+            active.name if active is not None else _("tip_project_menu"))
+        no_project = active is None
+        if self.project_name_btn.property("noProject") != no_project:
+            self.project_name_btn.setProperty("noProject", no_project)
+            # 動的プロパティによる QSS セレクタ切替は再ポリッシュが必要
+            style = self.project_name_btn.style()
+            style.unpolish(self.project_name_btn)
+            style.polish(self.project_name_btn)
+
+    def _switch_project_by_index(self, index: int) -> None:
+        """Alt+N: 並び順で index 番目のプロジェクトへ切替。
+
+        範囲外（プロジェクト数不足）は何もしない。選択中プロジェクトの
+        再指定も _switch_project 側の同一 ID チェックで no-op になる。
+        """
+        projects = self.project_manager.projects
+        if not 0 <= index < len(projects):
+            return
+        self._switch_project(projects[index].id)
+
     def _switch_project(self, project_id: str | None) -> None:
         if project_id == self.project_manager.active_project_id:
             return
@@ -989,6 +1042,8 @@ class MainWindow(QMainWindow):
             # アクティブプロジェクトが削除された → デフォルトへフォールバック
             self._load_project_scoped_stores()
             self._reload_all_project_scoped_ui()
+        # リネーム・並び替えのみ（アクティブ不変）でも表示名を最新化
+        self._update_project_button()
 
     def _reload_all_project_scoped_ui(self) -> None:
         """プロジェクト切替後にプロジェクト範囲の UI を全て再読込する。"""
@@ -1007,6 +1062,8 @@ class MainWindow(QMainWindow):
         self._close_all_tabs()   # 仮タブ1枚が残る
         self._restore_tabs()
         self.close_tab(0)        # 仮タブを閉じる
+        # トップバーの現在プロジェクト名表示
+        self._update_project_button()
 
     def _close_all_tabs(self) -> None:
         """全タブを閉じる。「最後の1タブは閉じられない」既存制約（close_tab）に
@@ -1052,6 +1109,21 @@ class MainWindow(QMainWindow):
         add("ペイン切替", "F6", self.toggle_active_pane)
         add("表示モード切替", "Ctrl+Shift+T", self.toggle_view_mode)
         # Space は FileTableView.preview_requested 経由（QAction だと二重発火するため）
+
+        # プロジェクト上位5件のクイック切替（Alt+1〜5）。
+        # 割り当ては「並び順のインデックス」に対して行い、ハンドラが呼び出し
+        # 時点の一覧を参照するため、並び替え後の再登録は不要。テンキーの
+        # 数字（KeypadModifier 付きで届く）も同じ動作にする。
+        for i in range(5):
+            action = QAction(f"プロジェクト{i + 1}へ切替", self)
+            keypad = (Qt.KeyboardModifier.AltModifier.value
+                      | Qt.KeyboardModifier.KeypadModifier.value
+                      | (Qt.Key.Key_1.value + i))
+            action.setShortcuts(
+                [QKeySequence(f"Alt+{i + 1}"), QKeySequence(keypad)])
+            action.triggered.connect(
+                lambda checked=False, i=i: self._switch_project_by_index(i))
+            self.addAction(action)
 
         # 設定はトップバーの歯車アイコン（settings_btn → _show_settings_menu）に移動。
         # Win+E オーバーライド用の永続アクションをここで生成しておく。

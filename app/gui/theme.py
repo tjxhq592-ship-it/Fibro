@@ -384,6 +384,11 @@ QToolButton:pressed {{
     background: {t['sel_bg']};
 }}
 
+/* ---- トップバーの現在プロジェクト名表示（未選択時は控えめな色） ---- */
+QToolButton#projectNameBtn[noProject="true"] {{
+    color: {t['text_hint']};
+}}
+
 /* ---- アプリのベース背景（カード間の余白に見える層） ---- */
 QMainWindow, QWidget#centralRoot {{
     background-color: {t['app_base']};

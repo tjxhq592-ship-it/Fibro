@@ -271,3 +271,94 @@ class TestProjectSwitch:
         win._load_project_scoped_stores()
         win._reload_all_project_scoped_ui()
         assert win.favorites.tree.topLevelItemCount() == 1
+
+
+# ---- クイック切替（Alt+1〜5）と現在プロジェクト名表示 ----
+class TestProjectQuickSwitch:
+    def test_switch_by_index(self, qapp, tmp_path, monkeypatch):
+        """並び順 N 番目への切替。"""
+        win = _make_window(tmp_path, monkeypatch)
+        a = win.project_manager.add("A")
+        win.project_manager.add("B")
+        win._switch_project_by_index(0)
+        assert win.project_manager.active_project_id == a.id
+
+    def test_out_of_range_is_noop(self, qapp, tmp_path, monkeypatch):
+        """プロジェクト数不足のインデックスは例外なく無視される。"""
+        win = _make_window(tmp_path, monkeypatch)
+        for i in range(5):  # 0件の状態
+            win._switch_project_by_index(i)
+        assert win.project_manager.active_project_id is None
+        a = win.project_manager.add("A")
+        win._switch_project_by_index(0)
+        win._switch_project_by_index(4)  # 2件目以降は存在しない
+        assert win.project_manager.active_project_id == a.id
+
+    def test_same_project_is_noop(self, qapp, tmp_path, monkeypatch):
+        """選択中プロジェクトの再指定で再読込が走らない。"""
+        win = _make_window(tmp_path, monkeypatch)
+        win._create_project("empty", "A")
+        calls = []
+        monkeypatch.setattr(win, "_reload_all_project_scoped_ui",
+                            lambda: calls.append(1))
+        win._switch_project_by_index(0)
+        assert not calls
+
+    def test_follows_reorder_without_reregistration(
+            self, qapp, tmp_path, monkeypatch):
+        """並び替え直後、再起動なしで新しい並び順の N 番目が対象になる。"""
+        win = _make_window(tmp_path, monkeypatch)
+        a, b, c = (win.project_manager.add(n) for n in "ABC")
+        win.project_manager.reorder([c.id, a.id, b.id])
+        win._switch_project_by_index(0)
+        assert win.project_manager.active.name == "C"
+        win.project_manager.reorder([b.id, c.id, a.id])
+        win._switch_project_by_index(0)
+        assert win.project_manager.active.name == "B"
+
+    def test_alt_shortcuts_registered_once(self, qapp, tmp_path, monkeypatch):
+        """Alt+1〜5 がそれぞれ1アクションにのみ割り当てられている（衝突なし）。"""
+        from PySide6.QtGui import QKeySequence
+        win = _make_window(tmp_path, monkeypatch)
+        for n in range(1, 6):
+            seq = QKeySequence(f"Alt+{n}")
+            owners = [a for a in win.actions() if seq in a.shortcuts()]
+            assert len(owners) == 1
+
+    def test_button_shows_active_and_none_state(
+            self, qapp, tmp_path, monkeypatch):
+        """未選択時は (プロジェクトなし) 表示、切替で名前に即時更新。"""
+        from app.i18n import _
+        win = _make_window(tmp_path, monkeypatch)
+        assert win.project_name_btn.text() == _("project_none")
+        assert win.project_name_btn.property("noProject") is True
+        win._create_project("empty", "仕事")
+        assert win.project_name_btn.text() == "仕事"
+        assert win.project_name_btn.property("noProject") is False
+        win._switch_project(None)
+        assert win.project_name_btn.text() == _("project_none")
+        assert win.project_name_btn.property("noProject") is True
+
+    def test_button_elides_long_name_with_tooltip(
+            self, qapp, tmp_path, monkeypatch):
+        """50文字超の名前はエリジオン表示、ツールチップはフル名。"""
+        win = _make_window(tmp_path, monkeypatch)
+        long_name = "とても長いプロジェクト名" * 5  # 60文字
+        win._create_project("empty", long_name)
+        text = win.project_name_btn.text()
+        assert text != long_name
+        assert text.endswith("…")
+        assert win.project_name_btn.toolTip() == long_name
+
+    def test_button_updates_on_rename_via_manage(
+            self, qapp, tmp_path, monkeypatch):
+        """管理ダイアログでのリネーム（アクティブ不変）後に表示名が更新される。"""
+        from app.gui.project_dialog import ProjectDialog
+        win = _make_window(tmp_path, monkeypatch)
+        win._create_project("empty", "旧名")
+        pid = win.project_manager.active_project_id
+        monkeypatch.setattr(
+            ProjectDialog, "exec",
+            lambda dlg: dlg._manager.rename(pid, "新名"))
+        win._manage_projects()
+        assert win.project_name_btn.text() == "新名"
