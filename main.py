@@ -58,6 +58,11 @@ def main() -> int:
     if APP_ICON.exists():
         app.setWindowIcon(QIcon(str(APP_ICON)))
 
+    # Windows の「アニメーション効果を表示する」設定を尊重する。
+    # OFF なら全 UI アニメーションが 0ms になる（MOTION.duration 経由）。
+    from app.gui.motion import init_reduced_motion
+    init_reduced_motion()
+
     from app.gui.theme import app_font
     app.setFont(app_font())
 
