@@ -6,11 +6,14 @@
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QByteArray, Qt, Signal
+from PySide6.QtCore import QByteArray, Qt, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget,
+    QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QSizePolicy,
+    QVBoxLayout, QWidget,
 )
+
+from app.gui.motion import MOTION, make_animation
 
 # Qt が縦サイズ無制限に使う番兵値（QWIDGETSIZE_MAX）。
 _QWIDGETSIZE_MAX = (1 << 24) - 1
@@ -141,6 +144,10 @@ class CollapsibleSection(QWidget):
         self._collapsed = collapsed
         self._content.setVisible(not collapsed)
         self._header.set_collapsed(collapsed)
+        if not collapsed and self.isVisible():
+            # 展開時のみフェードイン。畳む方は即時（退出は入場より速く）。
+            # 構築時（未表示）は演出しない＝起動時に4セクションが揺れない。
+            self._fade_in_content()
         if collapsed:
             # Fixed ポリシーで QSplitter が余剰スペースを強制配分するのを防ぐ。
             # maximumHeight だけでは QSplitter が子の最大値を超えて拡張するため不十分。
@@ -154,6 +161,28 @@ class CollapsibleSection(QWidget):
         else:
             self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
             self.setMaximumHeight(_QWIDGETSIZE_MAX)
+
+    def _fade_in_content(self) -> None:
+        """展開した本体を MOTION.PANEL / EASE_OUT でフェードイン。
+
+        セクションは QSplitter 内のレイアウト内ウィジェットで、高さの連続
+        アニメは毎フレームのレイアウト再計算を誘発する（禁止事項）ため、
+        レイアウト変更は setVisible の即時1回とし、演出は不透明度のみ。
+        開閉を連打しても make_animation が現在の不透明度から再ターゲットする。
+        """
+        effect = self._content.graphicsEffect()
+        if effect is None:
+            effect = QGraphicsOpacityEffect(self._content)
+            self._content.setGraphicsEffect(effect)
+            effect.setOpacity(0.0)
+
+        def _clear_effect() -> None:
+            # finished 発火中に effect（アニメの親）を破棄しないよう1tick遅延。
+            # 効果を外すことで通常描画へ戻す（QGraphicsOpacityEffect の常駐回避）。
+            QTimer.singleShot(0, lambda: self._content.setGraphicsEffect(None))
+
+        make_animation(effect, b"opacity", 1.0, MOTION.PANEL, MOTION.EASE_OUT,
+                       on_finished=_clear_effect)
 
     def set_header_height(self, height: int) -> None:
         """見出しバーの高さを固定する（タブ行と高さを揃える用）。"""

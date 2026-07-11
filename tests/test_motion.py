@@ -87,3 +87,53 @@ class TestMakeAnimation:
         anim = make_animation(w, "windowOpacity", 0.5, MOTION.FAST)
         assert anim is not None
         anim.stop()
+
+
+class TestCollapsibleFade:
+    """サイドバーセクション展開フェード（レイアウトアニメなし）。"""
+
+    def _make_section(self, qapp):
+        from PySide6.QtWidgets import QWidget
+        from app.gui.collapsible import CollapsibleSection
+        section = CollapsibleSection("TEST", QWidget())
+        section.show()
+        return section
+
+    def test_construction_has_no_effect(self, qapp):
+        """構築時（初期展開）はフェード演出しない＝起動時に揺れない。"""
+        section = self._make_section(qapp)
+        assert section._content.graphicsEffect() is None
+        section.close()
+
+    def test_expand_starts_fade(self, qapp):
+        from PySide6.QtCore import QAbstractAnimation
+        section = self._make_section(qapp)
+        section.set_collapsed(True)
+        section.set_collapsed(False)
+        effect = section._content.graphicsEffect()
+        assert effect is not None
+        anim = getattr(effect, "_motion_anim_opacity", None)
+        assert anim is not None
+        assert anim.state() == QAbstractAnimation.State.Running
+        assert anim.duration() == MOTION.PANEL
+        assert anim.easingCurve().type() == MOTION.EASE_OUT
+        anim.stop()
+        section.close()
+
+    def test_expand_reduced_motion_is_instant(self, qapp):
+        section = self._make_section(qapp)
+        MOTION.reduced_motion = True
+        section.set_collapsed(True)
+        section.set_collapsed(False)
+        effect = section._content.graphicsEffect()
+        # 即時に不透明（効果はあっても opacity=1.0）で見える
+        assert effect is None or effect.opacity() == pytest.approx(1.0)
+        assert section._content.isVisible()
+        section.close()
+
+    def test_collapse_is_instant(self, qapp):
+        """畳む方向は演出なしで即時に隠れる。"""
+        section = self._make_section(qapp)
+        section.set_collapsed(True)
+        assert not section._content.isVisible()
+        section.close()
