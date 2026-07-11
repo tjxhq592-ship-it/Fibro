@@ -1315,8 +1315,13 @@ class MainWindow(QMainWindow):
             if proxy_idx.isValid():
                 sel_model = self.table.selectionModel()
                 if sel_model:
+                    # Rows なしの ClearAndSelect だと名前列のみハイライトされる
+                    sel_model.select(
+                        proxy_idx,
+                        QItemSelectionModel.SelectionFlag.ClearAndSelect
+                        | QItemSelectionModel.SelectionFlag.Rows)
                     sel_model.setCurrentIndex(
-                        proxy_idx, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+                        proxy_idx, QItemSelectionModel.SelectionFlag.NoUpdate)
 
     def _on_mouse_nav(self, forward: bool) -> None:
         """マウスサイドボタン: 進む/戻る。"""
@@ -1977,8 +1982,13 @@ class MainWindow(QMainWindow):
         proxy_idx = self.proxy.mapFromSource(idx)
         sel_model = self.table.selectionModel()
         if proxy_idx.isValid() and sel_model:
+            # Rows なしの ClearAndSelect だと名前列のみハイライトされる
+            sel_model.select(
+                proxy_idx,
+                QItemSelectionModel.SelectionFlag.ClearAndSelect
+                | QItemSelectionModel.SelectionFlag.Rows)
             sel_model.setCurrentIndex(
-                proxy_idx, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+                proxy_idx, QItemSelectionModel.SelectionFlag.NoUpdate)
 
     # ---- 選択操作 ----
     def select_all(self) -> None:
