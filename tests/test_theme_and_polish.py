@@ -175,3 +175,45 @@ class TestSingleRenameDialog:
         assert dlg.name_edit.text() == "docs"
         dlg.name_edit.setText("documents")
         assert dlg.new_name() == "documents"
+
+
+class TestPressedFeedback:
+    """押下フィードバック（フェーズ3）: pressed_bg トークンと QSS :pressed。"""
+
+    def test_all_themes_have_pressed_bg(self):
+        from app.gui.theme import TOKENS
+        for theme_name, tokens in TOKENS.items():
+            assert "pressed_bg" in tokens, f"{theme_name} に pressed_bg がない"
+
+    def test_qss_has_pressed_rules(self):
+        """QToolButton/QPushButton/タブ/ヘッダに :pressed 相当のルールがある。"""
+        from app.gui.theme import TOKENS, _stylesheet
+        qss = _stylesheet(TOKENS["light"])
+        assert "QToolButton:pressed" in qss
+        assert "QPushButton:pressed" in qss
+        assert "QTabBar::tab:pressed" in qss
+        assert '#collapsibleHeader[pressed="true"]' in qss
+        # pressed_bg が実際に埋め込まれている
+        assert TOKENS["light"]["pressed_bg"] in qss
+
+    def test_header_pressed_property_toggles(self, qapp):
+        """collapsibleHeader が押下中のみ pressed プロパティを立てる。"""
+        from PySide6.QtCore import QPointF, Qt
+        from PySide6.QtGui import QMouseEvent
+        from PySide6.QtWidgets import QWidget
+        from app.gui.collapsible import CollapsibleSection
+
+        section = CollapsibleSection("TEST", QWidget())
+        header = section._header
+        press = QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress, QPointF(5, 5),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier)
+        release = QMouseEvent(
+            QMouseEvent.Type.MouseButtonRelease, QPointF(5, 5),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier)
+        header.mousePressEvent(press)
+        assert header.property("pressed") is True
+        header.mouseReleaseEvent(release)
+        assert header.property("pressed") is False

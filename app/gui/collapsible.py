@@ -87,10 +87,25 @@ class _HeaderBar(QFrame):
     def set_collapsed(self, collapsed: bool) -> None:
         self._update_chevron(collapsed)
 
+    def _set_pressed(self, pressed: bool) -> None:
+        """QSS の #collapsibleHeader[pressed="true"] を発火させる。
+
+        QFrame は :pressed 疑似状態を持たないため動的プロパティで代替する。
+        """
+        self.setProperty("pressed", pressed)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
     def mousePressEvent(self, event) -> None:  # noqa: N802 — Qt API
         if event.button() == Qt.MouseButton.LeftButton:
+            self._set_pressed(True)
             self.clicked.emit()
         super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 — Qt API
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._set_pressed(False)
+        super().mouseReleaseEvent(event)
 
 
 class CollapsibleSection(QWidget):

@@ -4,7 +4,7 @@
 永続化する。テーマ（"theme" キー）はプロジェクト範囲のため ThemeManager では
 保持せず、ProjectSettingsStore に保存された値を apply(app, theme=...) で
 呼び出し側が明示的に渡す。
-色は TOKENS（テーマ名 → 19キーのセマンティックトークン）に集約し、
+色は TOKENS（テーマ名 → 20キーのセマンティックトークン）に集約し、
 QPalette と QSS の両方を同じ値から生成する。未知のテーマ名は light に
 フォールバックする。
 """
@@ -69,6 +69,7 @@ TOKENS: dict[str, dict[str, str]] = {
 
         "sel_bg": "rgba(91,156,246,0.28)",
         "hover_bg": "rgba(255,255,255,0.07)",
+        "pressed_bg": "rgba(255,255,255,0.13)",
 
         "scrollbar": "#4a4d55",
 
@@ -96,6 +97,7 @@ TOKENS: dict[str, dict[str, str]] = {
 
         "sel_bg": "rgba(47,111,224,0.14)",
         "hover_bg": "rgba(0,0,0,0.04)",
+        "pressed_bg": "rgba(0,0,0,0.10)",
 
         "scrollbar": "#c7cad1",
 
@@ -111,6 +113,7 @@ TOKENS: dict[str, dict[str, str]] = {
         "text": "#eceff4", "text_sub": "#d8dee9", "text_hint": "#7b88a1",
         "accent": "#88c0d0",
         "sel_bg": "rgba(136,192,208,0.28)", "hover_bg": "rgba(255,255,255,0.07)",
+        "pressed_bg": "rgba(255,255,255,0.13)",
         "scrollbar": "#4c566a",
         "status_ok": "#a3be8c", "status_unchanged": "#7b88a1",
         "status_warn": "#d08770", "status_error": "#bf616a",
@@ -122,6 +125,7 @@ TOKENS: dict[str, dict[str, str]] = {
         "text": "#586e75", "text_sub": "#657b83", "text_hint": "#93a1a1",
         "accent": "#268bd2",
         "sel_bg": "rgba(38,139,210,0.14)", "hover_bg": "rgba(0,0,0,0.04)",
+        "pressed_bg": "rgba(0,0,0,0.10)",
         "scrollbar": "#93a1a1",
         "status_ok": "#859900", "status_unchanged": "#93a1a1",
         "status_warn": "#cb4b16", "status_error": "#dc322f",
@@ -133,6 +137,7 @@ TOKENS: dict[str, dict[str, str]] = {
         "text": "#93a1a1", "text_sub": "#839496", "text_hint": "#657b83",
         "accent": "#268bd2",
         "sel_bg": "rgba(38,139,210,0.28)", "hover_bg": "rgba(255,255,255,0.06)",
+        "pressed_bg": "rgba(255,255,255,0.12)",
         "scrollbar": "#586e75",
         "status_ok": "#859900", "status_unchanged": "#657b83",
         "status_warn": "#cb4b16", "status_error": "#dc322f",
@@ -144,6 +149,7 @@ TOKENS: dict[str, dict[str, str]] = {
         "text": "#f8f8f2", "text_sub": "#a4a8c5", "text_hint": "#6272a4",
         "accent": "#bd93f9",
         "sel_bg": "rgba(189,147,249,0.28)", "hover_bg": "rgba(255,255,255,0.07)",
+        "pressed_bg": "rgba(255,255,255,0.13)",
         "scrollbar": "#6272a4",
         "status_ok": "#50fa7b", "status_unchanged": "#6272a4",
         "status_warn": "#ffb86c", "status_error": "#ff5555",
@@ -155,6 +161,7 @@ TOKENS: dict[str, dict[str, str]] = {
         "text": "#ebdbb2", "text_sub": "#d5c4a1", "text_hint": "#a89984",
         "accent": "#fe8019",
         "sel_bg": "rgba(254,128,25,0.25)", "hover_bg": "rgba(255,255,255,0.06)",
+        "pressed_bg": "rgba(255,255,255,0.12)",
         "scrollbar": "#7c6f64",
         "status_ok": "#b8bb26", "status_unchanged": "#928374",
         "status_warn": "#fabd2f", "status_error": "#fb4934",
@@ -166,6 +173,7 @@ TOKENS: dict[str, dict[str, str]] = {
         "text": "#abb2bf", "text_sub": "#828997", "text_hint": "#5c6370",
         "accent": "#61afef",
         "sel_bg": "rgba(97,175,239,0.25)", "hover_bg": "rgba(255,255,255,0.06)",
+        "pressed_bg": "rgba(255,255,255,0.12)",
         "scrollbar": "#4b5263",
         "status_ok": "#98c379", "status_unchanged": "#5c6370",
         "status_warn": "#d19a66", "status_error": "#e06c75",
@@ -177,6 +185,7 @@ TOKENS: dict[str, dict[str, str]] = {
         "text": "#f8f8f2", "text_sub": "#c2c2bf", "text_hint": "#75715e",
         "accent": "#a6e22e",
         "sel_bg": "rgba(166,226,46,0.22)", "hover_bg": "rgba(255,255,255,0.07)",
+        "pressed_bg": "rgba(255,255,255,0.13)",
         "scrollbar": "#75715e",
         "status_ok": "#a6e22e", "status_unchanged": "#75715e",
         "status_warn": "#fd971f", "status_error": "#f92672",
@@ -188,6 +197,7 @@ TOKENS: dict[str, dict[str, str]] = {
         "text": "#ffffff", "text_sub": "#e0e0e0", "text_hint": "#b0b0b0",
         "accent": "#ffff00",
         "sel_bg": "rgba(255,255,0,0.35)", "hover_bg": "rgba(255,255,255,0.15)",
+        "pressed_bg": "rgba(255,255,255,0.30)",
         "scrollbar": "#ffffff",
         "status_ok": "#00ff00", "status_unchanged": "#b0b0b0",
         "status_warn": "#ffaa00", "status_error": "#ff3333",
@@ -332,6 +342,10 @@ QTabBar::tab:hover {{
     color: {t['text']};
 }}
 
+QTabBar::tab:pressed {{
+    background: {t['pressed_bg']};
+}}
+
 QTabBar::tab:selected {{
     background: {t['elevated']};
     color: {t['text']};
@@ -381,7 +395,36 @@ QToolButton:hover {{
 }}
 
 QToolButton:pressed {{
-    background: {t['sel_bg']};
+    background: {t['pressed_bg']};
+    padding: 4px 6px 2px 6px; /* 1px 沈み込み（高さは維持） */
+}}
+
+/* ---- プッシュボタン（ダイアログ / 設定画面） ---- */
+QPushButton {{
+    background-color: {t['surface']};
+    color: {t['text']};
+    border: 1px solid {t['border_str']};
+    border-radius: 6px;
+    padding: 5px 14px;
+    min-width: 64px;
+}}
+
+QPushButton:hover {{
+    background-color: {t['elevated']};
+}}
+
+QPushButton:pressed {{
+    background-color: {t['pressed_bg']};
+    padding: 6px 14px 4px 14px; /* 1px 沈み込み（高さは維持） */
+}}
+
+QPushButton:default {{
+    border: 1px solid {t['accent']};
+}}
+
+QPushButton:disabled {{
+    color: {t['text_hint']};
+    border-color: {t['border']};
 }}
 
 /* ---- トップバーの現在プロジェクト名表示（未選択時は控えめな色） ---- */
@@ -416,6 +459,11 @@ QSplitter#mainSplitter::handle {{
 #collapsibleHeader:hover {{
     background: {t['elevated']};
     color: {t['text']};
+}}
+
+/* QFrame は :pressed 疑似状態を持たないため動的プロパティで表現 */
+#collapsibleHeader[pressed="true"] {{
+    background: {t['pressed_bg']};
 }}
 
 /* ---- スプリッタの仕切り（点線ハンドル廃止→細線） ---- */
@@ -515,6 +563,11 @@ QToolButton#copyCancel:hover {{
     background: {t['hover_bg']};
 }}
 
+QToolButton#copyCancel:pressed {{
+    color: {t['status_error']};
+    background: {t['pressed_bg']};
+}}
+
 /* ---- タブ閉じるボタン（カスタム QToolButton） ---- */
 QToolButton#tabClose {{
     color: {t['text_hint']};
@@ -530,6 +583,11 @@ QToolButton#tabClose:hover {{
     background: {t['hover_bg']};
 }}
 
+QToolButton#tabClose:pressed {{
+    color: {t['text']};
+    background: {t['pressed_bg']};
+}}
+
 /* ---- パスボックス（パンくずバー枠） ---- */
 QFrame#pathBox {{
     background: {t['surface']};
@@ -542,6 +600,14 @@ QFrame#pathBox QToolButton {{
     border: none;
     border-radius: 0;
     color: {t['text']};
+}}
+
+QFrame#pathBox QToolButton:hover {{
+    background: {t['hover_bg']};
+}}
+
+QFrame#pathBox QToolButton:pressed {{
+    background: {t['pressed_bg']};
 }}
 
 QFrame#pathBox QLabel {{
