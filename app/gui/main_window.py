@@ -1169,7 +1169,7 @@ class MainWindow(QMainWindow):
     def _set_language(self, lang: str) -> None:
         """言語を設定に保存。即時反映はせず次回起動時に適用する。"""
         self.theme_manager.set("language", lang)
-        self.statusBar().showMessage(_("lang_restart"), 5000)
+        self.notify("status", _("lang_restart"))
 
     # バグ報告先（GitHub Issues）
     _ISSUES_URL = "https://github.com/tjxhq592-ship-it/release/issues"
@@ -1217,7 +1217,7 @@ class MainWindow(QMainWindow):
             self.winekey_action.blockSignals(True)
             self.winekey_action.setChecked(winekey.is_enabled())
             self.winekey_action.blockSignals(False)
-        self.statusBar().showMessage(msg, 4000)
+        self.notify("status", msg)
 
     def _set_initial_directory(self) -> None:
         """初期ディレクトリをユーザーが選択して保存。"""
@@ -1228,8 +1228,7 @@ class MainWindow(QMainWindow):
         if path:
             self.theme_manager.set("initial_dir", path)
             self.navigate(path)
-            self.statusBar().showMessage(
-                _("initial_dir_set").format(path=path), 3000)
+            self.notify("completion", _("initial_dir_set").format(path=path))
 
     def _apply_filter(self) -> None:
         text = self.filter_edit.text().strip()
@@ -1549,7 +1548,7 @@ class MainWindow(QMainWindow):
         ok = shell_menu.show_shell_context_menu(
             int(self.winId()), paths, gpos.x(), gpos.y())
         if not ok:
-            self.statusBar().showMessage(_("shell_menu_fail"), 3000)
+            self.notify("error", _("shell_menu_fail"))
         return ok
 
     def _active_view(self):
@@ -1597,8 +1596,7 @@ class MainWindow(QMainWindow):
         clip = QApplication.clipboard()
         if clip:
             clip.setText("\n".join(paths))
-            self.statusBar().showMessage(
-                _("copied_n").format(n=len(paths)), 3000)
+            self.notify("completion", _("copied_n").format(n=len(paths)))
 
     def _open_selected(self) -> None:
         """Enter キー: 選択中の項目を開く/実行（ダブルクリックと同等）。"""
@@ -1622,13 +1620,12 @@ class MainWindow(QMainWindow):
             clipboard_files.set_files(paths, move=(mode == "cut"))
             self._clipboard = (mode, paths)  # 後方互換（内部参照用）
             verb = _("clip_copied" if mode == "copy" else "clip_cut")
-            self.statusBar().showMessage(
-                _("clipped_n").format(n=len(paths), verb=verb), 3000)
+            self.notify("completion", _("clipped_n").format(n=len(paths), verb=verb))
 
     def paste_clipboard(self) -> None:
         # システムクリップボードから読む（エクスプローラーでコピーした物も貼れる）
         if self._op_thread is not None:
-            self.statusBar().showMessage(_("copy_busy"), 4000)
+            self.notify("warning", _("copy_busy"))
             return
         from app import clipboard_files
         got = clipboard_files.get_files()
@@ -1647,7 +1644,7 @@ class MainWindow(QMainWindow):
     def _on_files_dropped(self, paths: list, dest: str, copy: bool) -> None:
         """D&D: 既定は移動、Ctrl押下でコピー。どちらも Undo 可（非同期実行）。"""
         if self._op_thread is not None:
-            self.statusBar().showMessage(_("copy_busy"), 4000)
+            self.notify("warning", _("copy_busy"))
             return
         from app.gui.conflict_dialog import make_resolver
         from app.engine.file_ops import build_plan
@@ -1714,7 +1711,7 @@ class MainWindow(QMainWindow):
         if not plan:
             return
         if self._op_thread is not None:
-            self.statusBar().showMessage(_("copy_busy"), 4000)
+            self.notify("warning", _("copy_busy"))
             return
         from app.gui.copy_worker import CopyWorker
         self._copy_kind = kind
@@ -1762,13 +1759,12 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, _("dlg_paste_fail"), str(error))
             return
         if self._op_cancelled:
-            self.statusBar().showMessage(_("copy_cancelled"), 4000)
+            self.notify("warning", _("copy_cancelled"))
         else:
             verb = _("kind_move" if self._copy_kind == "move"
                      else "kind_copy")
             n = len(record.pairs) if record is not None else 0
-            self.statusBar().showMessage(
-                _("copy_done").format(n=n, verb=verb), 4000)
+            self.notify("completion", _("copy_done").format(n=n, verb=verb))
 
     def _on_native_drop(self, paths: list, dest: str, gx: int, gy: int) -> None:
         """右ドラッグ: Windows ネイティブの「ここに解凍/コピー/移動…」を表示。
@@ -1796,7 +1792,7 @@ class MainWindow(QMainWindow):
         if not paths:
             return
         if self._op_thread is not None:
-            self.statusBar().showMessage(_("copy_busy"), 4000)
+            self.notify("warning", _("copy_busy"))
             return
         names = "\n".join(Path(p).name for p in paths[:10])
         if len(paths) > 10:
@@ -1814,7 +1810,7 @@ class MainWindow(QMainWindow):
         if not paths:
             return
         if self._op_thread is not None:
-            self.statusBar().showMessage(_("copy_busy"), 4000)
+            self.notify("warning", _("copy_busy"))
             return
         names = "\n".join(Path(p).name for p in paths[:10])
         if len(paths) > 10:
@@ -1836,7 +1832,7 @@ class MainWindow(QMainWindow):
         パターンで非同期化する。
         """
         if self._op_thread is not None:
-            self.statusBar().showMessage(_("copy_busy"), 4000)
+            self.notify("warning", _("copy_busy"))
             return
         from app.gui.op_workers import DeleteWorker
         self._delete_permanent = permanent
@@ -1854,16 +1850,28 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, _(key), str(error))
             return
         if self._op_cancelled:
-            self.statusBar().showMessage(_("copy_cancelled"), 4000)
+            self.notify("warning", _("copy_cancelled"))
             return
         n = len(record.pairs) if record is not None else 0
         key = "deleted_n" if self._delete_permanent else "trashed_n"
-        self.statusBar().showMessage(_(key).format(n=n), 3000)
+        self.notify("completion", _(key).format(n=n))
 
     def show_properties(self) -> None:
         paths = self.selected_paths()
         if paths:
             PropertiesDialog(paths[0], self).exec()
+
+    # ---- 通知（トースト） ----
+    def notify(self, kind: str, message: str) -> None:
+        """トースト通知。kind: "status" | "completion" | "warning" | "error"。
+
+        操作の完了・失敗・警告はこちらへ。件数表示など受動的な情報は
+        従来どおり statusBar().showMessage を使う。
+        """
+        if not hasattr(self, "_toaster"):
+            from app.gui.toast import ToastManager
+            self._toaster = ToastManager(self)
+        self._toaster.show_toast(kind, message)
 
     # ---- 新規作成 ----
     def _unique_path(self, name: str) -> Path:
@@ -2047,7 +2055,7 @@ class MainWindow(QMainWindow):
         if path:
             self.theme_manager.set("initial_dir", path)
             self.navigate(path)
-            self.statusBar().showMessage(_("initial_dir_set").format(path=path), 3000)
+            self.notify("completion", _("initial_dir_set").format(path=path))
 
     # ---- その他操作 ----
     def refresh(self) -> None:
@@ -2151,8 +2159,8 @@ class MainWindow(QMainWindow):
         try:
             self.rename_executor.execute(
                 self.current_path, [(old_name, new_name)])
-            self.statusBar().showMessage(
-                _("single_rename_done").format(old=old_name, new=new_name), 5000)
+            self.notify("completion",
+                        _("single_rename_done").format(old=old_name, new=new_name))
         except OSError as e:
             QMessageBox.critical(self, _("dlg_rename_fail"), str(e))
 
@@ -2281,31 +2289,31 @@ class MainWindow(QMainWindow):
                               self.rename_executor, self,
                               preset_store=self.preset_store)
         if dialog.exec():
-            self.statusBar().showMessage(_("rename_done"), 5000)
+            self.notify("completion", _("rename_done"))
 
     def undo_last(self) -> None:
         if self.rename_executor.can_undo:
             try:
                 record = self.rename_executor.undo()
-                self.statusBar().showMessage(
-                    _("undo_rename_done").format(n=len(record.mapping)), 3000)
+                self.notify("completion",
+                            _("undo_rename_done").format(n=len(record.mapping)))
             except (OSError, RuntimeError) as e:
                 QMessageBox.critical(self, _("undo_failed"), str(e))
         elif self.file_ops.can_undo:
             # 大きな移動/コピーの取り消しは進めるときと同じだけ時間がかかる
             # ため、ワーカースレッドで実行する（履歴からの除去は成功後）。
             if self._op_thread is not None:
-                self.statusBar().showMessage(_("copy_busy"), 4000)
+                self.notify("warning", _("copy_busy"))
                 return
             record = self.file_ops.peek_undo()
             if record is None:
-                self.statusBar().showMessage(_("undo_none"), 3000)
+                self.notify("status", _("undo_none"))
                 return
             from app.gui.op_workers import UndoWorker
             self._start_op_worker(UndoWorker(record), "undo_progress",
                                   self._on_undo_finished, cancellable=False)
         else:
-            self.statusBar().showMessage(_("undo_none"), 3000)
+            self.notify("status", _("undo_none"))
 
     def _on_undo_finished(self, record, error) -> None:
         self._finish_op_thread()
@@ -2315,5 +2323,5 @@ class MainWindow(QMainWindow):
             return
         self.file_ops.discard_record(record)
         kind = _("kind_move" if record.kind == "move" else "kind_copy")
-        self.statusBar().showMessage(
-            _("undo_move_done").format(kind=kind, n=len(record.pairs)), 3000)
+        self.notify("completion",
+                    _("undo_move_done").format(kind=kind, n=len(record.pairs)))

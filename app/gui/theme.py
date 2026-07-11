@@ -214,6 +214,15 @@ def current_accent() -> QColor:
     return _current_accent
 
 
+# 現在テーマのトークン辞書。ThemeManager.apply() が更新するモジュール状態。
+_current_tokens: dict[str, str] = TOKENS["light"]
+
+
+def current_tokens() -> dict[str, str]:
+    """現在適用中のテーマのトークン辞書を返す（トースト等のカスタム描画用）。"""
+    return _current_tokens
+
+
 def status_colors(theme: str = "light") -> dict[str, QColor]:
     """ステータス表示用カラーをテーマ別に返す（rename_dialog 等で使用）。"""
     t = TOKENS.get(theme, TOKENS["light"])
@@ -666,8 +675,9 @@ class ThemeManager:
         app.setPalette(_palette(t))
         app.setStyleSheet(_stylesheet(t))
 
-        global _current_accent
+        global _current_accent, _current_tokens
         _current_accent = QColor(t["accent"])
+        _current_tokens = t
 
     def set_theme(self, app: QApplication, theme: str) -> str:
         """指定テーマを適用し、実際に適用されたテーマ名を返す。
