@@ -4,7 +4,7 @@
 永続化する。テーマ（"theme" キー）はプロジェクト範囲のため ThemeManager では
 保持せず、ProjectSettingsStore に保存された値を apply(app, theme=...) で
 呼び出し側が明示的に渡す。
-色は TOKENS（テーマ名 → 20キーのセマンティックトークン）に集約し、
+色は TOKENS（テーマ名 → ThemeTokens のセマンティックトークン）に集約し、
 QPalette と QSS の両方を同じ値から生成する。未知のテーマ名は light に
 フォールバックする。
 """
@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TypedDict
 
 from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtWidgets import QApplication
@@ -49,7 +50,36 @@ THEME_META: dict[str, dict] = {
 # 各配色は公式パレット（Nord / Solarized / Dracula / Gruvbox / One Dark /
 # Monokai）の値を基準に、公式に存在しない中間色（surface/elevated 段差等）は
 # 近傍色から補間した近似値。high_contrast のみアクセシビリティ用の自作配色。
-TOKENS: dict[str, dict[str, str]] = {
+
+
+class ThemeTokens(TypedDict):
+    """テーマ1件分のトークン構成。キー漏れは静的解析で検出する。"""
+
+    bg: str
+    surface: str
+    elevated: str
+    app_base: str
+    card: str
+    border: str
+    border_str: str
+    text: str
+    text_sub: str
+    text_hint: str
+    icon: str
+    accent: str
+    on_accent: str
+    sel_bg: str
+    hover_bg: str
+    pressed_bg: str
+    overlay_bg: str
+    scrollbar: str
+    status_ok: str
+    status_unchanged: str
+    status_warn: str
+    status_error: str
+
+
+TOKENS: dict[str, ThemeTokens] = {
     "dark": {
         "bg": "#16171a",
         "surface": "#1e2024",
@@ -64,12 +94,15 @@ TOKENS: dict[str, dict[str, str]] = {
         "text": "#e3e5ea",
         "text_sub": "#a0a4ad",
         "text_hint": "#70737c",
+        "icon": "#e3e5ea",
 
         "accent": "#5b9cf6",
+        "on_accent": "#16171a",
 
         "sel_bg": "rgba(91,156,246,0.28)",
         "hover_bg": "rgba(255,255,255,0.07)",
         "pressed_bg": "rgba(255,255,255,0.13)",
+        "overlay_bg": "rgba(28,29,33,0.90)",
 
         "scrollbar": "#4a4d55",
 
@@ -92,12 +125,15 @@ TOKENS: dict[str, dict[str, str]] = {
         "text": "#1f2329",
         "text_sub": "#5c616b",
         "text_hint": "#8b909a",
+        "icon": "#1f2329",
 
         "accent": "#2f6fe0",
+        "on_accent": "#ffffff",
 
         "sel_bg": "rgba(47,111,224,0.14)",
         "hover_bg": "rgba(0,0,0,0.04)",
         "pressed_bg": "rgba(0,0,0,0.10)",
+        "overlay_bg": "rgba(255,255,255,0.92)",
 
         "scrollbar": "#c7cad1",
 
@@ -111,9 +147,11 @@ TOKENS: dict[str, dict[str, str]] = {
         "app_base": "#262a33", "card": "#3b4252",
         "border": "#434c5e", "border_str": "#4c566a",
         "text": "#eceff4", "text_sub": "#d8dee9", "text_hint": "#7b88a1",
-        "accent": "#88c0d0",
+        "icon": "#eceff4",
+        "accent": "#88c0d0", "on_accent": "#2e3440",
         "sel_bg": "rgba(136,192,208,0.28)", "hover_bg": "rgba(255,255,255,0.07)",
         "pressed_bg": "rgba(255,255,255,0.13)",
+        "overlay_bg": "rgba(59,66,82,0.90)",
         "scrollbar": "#4c566a",
         "status_ok": "#a3be8c", "status_unchanged": "#7b88a1",
         "status_warn": "#d08770", "status_error": "#bf616a",
@@ -123,9 +161,11 @@ TOKENS: dict[str, dict[str, str]] = {
         "app_base": "#f5efd9", "card": "#fdf6e3",
         "border": "#eee8d5", "border_str": "#93a1a1",
         "text": "#586e75", "text_sub": "#657b83", "text_hint": "#93a1a1",
-        "accent": "#268bd2",
+        "icon": "#586e75",
+        "accent": "#268bd2", "on_accent": "#fdf6e3",
         "sel_bg": "rgba(38,139,210,0.14)", "hover_bg": "rgba(0,0,0,0.04)",
         "pressed_bg": "rgba(0,0,0,0.10)",
+        "overlay_bg": "rgba(253,246,227,0.92)",
         "scrollbar": "#93a1a1",
         "status_ok": "#859900", "status_unchanged": "#93a1a1",
         "status_warn": "#cb4b16", "status_error": "#dc322f",
@@ -135,9 +175,11 @@ TOKENS: dict[str, dict[str, str]] = {
         "app_base": "#001e27", "card": "#073642",
         "border": "#0d4f5c", "border_str": "#586e75",
         "text": "#93a1a1", "text_sub": "#839496", "text_hint": "#657b83",
-        "accent": "#268bd2",
+        "icon": "#93a1a1",
+        "accent": "#268bd2", "on_accent": "#fdf6e3",
         "sel_bg": "rgba(38,139,210,0.28)", "hover_bg": "rgba(255,255,255,0.06)",
         "pressed_bg": "rgba(255,255,255,0.12)",
+        "overlay_bg": "rgba(7,54,66,0.90)",
         "scrollbar": "#586e75",
         "status_ok": "#859900", "status_unchanged": "#657b83",
         "status_warn": "#cb4b16", "status_error": "#dc322f",
@@ -147,9 +189,11 @@ TOKENS: dict[str, dict[str, str]] = {
         "app_base": "#21222c", "card": "#282a36",
         "border": "#383a4a", "border_str": "#44475a",
         "text": "#f8f8f2", "text_sub": "#a4a8c5", "text_hint": "#6272a4",
-        "accent": "#bd93f9",
+        "icon": "#f8f8f2",
+        "accent": "#bd93f9", "on_accent": "#282a36",
         "sel_bg": "rgba(189,147,249,0.28)", "hover_bg": "rgba(255,255,255,0.07)",
         "pressed_bg": "rgba(255,255,255,0.13)",
+        "overlay_bg": "rgba(40,42,54,0.90)",
         "scrollbar": "#6272a4",
         "status_ok": "#50fa7b", "status_unchanged": "#6272a4",
         "status_warn": "#ffb86c", "status_error": "#ff5555",
@@ -159,21 +203,26 @@ TOKENS: dict[str, dict[str, str]] = {
         "app_base": "#1d2021", "card": "#3c3836",
         "border": "#504945", "border_str": "#665c54",
         "text": "#ebdbb2", "text_sub": "#d5c4a1", "text_hint": "#a89984",
-        "accent": "#fe8019",
+        "icon": "#ebdbb2",
+        "accent": "#fe8019", "on_accent": "#282828",
         "sel_bg": "rgba(254,128,25,0.25)", "hover_bg": "rgba(255,255,255,0.06)",
         "pressed_bg": "rgba(255,255,255,0.12)",
+        "overlay_bg": "rgba(60,56,54,0.90)",
         "scrollbar": "#7c6f64",
         "status_ok": "#b8bb26", "status_unchanged": "#928374",
         "status_warn": "#fabd2f", "status_error": "#fb4934",
     },
+    # ダークモードの Elevation 原則（前面ほど明るい）に従い bg < surface < elevated。
     "one_dark": {
-        "bg": "#282c34", "surface": "#21252b", "elevated": "#2c313a",
-        "app_base": "#1e2227", "card": "#282c34",
+        "bg": "#1e2227", "surface": "#21252b", "elevated": "#282c34",
+        "app_base": "#181a1f", "card": "#1e2227",
         "border": "#3a3f4b", "border_str": "#4b5263",
         "text": "#abb2bf", "text_sub": "#828997", "text_hint": "#5c6370",
-        "accent": "#61afef",
+        "icon": "#abb2bf",
+        "accent": "#61afef", "on_accent": "#1e2227",
         "sel_bg": "rgba(97,175,239,0.25)", "hover_bg": "rgba(255,255,255,0.06)",
         "pressed_bg": "rgba(255,255,255,0.12)",
+        "overlay_bg": "rgba(40,44,52,0.90)",
         "scrollbar": "#4b5263",
         "status_ok": "#98c379", "status_unchanged": "#5c6370",
         "status_warn": "#d19a66", "status_error": "#e06c75",
@@ -183,9 +232,12 @@ TOKENS: dict[str, dict[str, str]] = {
         "app_base": "#1e1f1c", "card": "#272822",
         "border": "#3e3d32", "border_str": "#49483e",
         "text": "#f8f8f2", "text_sub": "#c2c2bf", "text_hint": "#75715e",
-        "accent": "#a6e22e",
-        "sel_bg": "rgba(166,226,46,0.22)", "hover_bg": "rgba(255,255,255,0.07)",
+        "icon": "#f8f8f2",
+        # status_ok（緑 #a6e22e）との意味衝突を避け、accent は Monokai のシアン。
+        "accent": "#66d9ef", "on_accent": "#272822",
+        "sel_bg": "rgba(102,217,239,0.22)", "hover_bg": "rgba(255,255,255,0.07)",
         "pressed_bg": "rgba(255,255,255,0.13)",
+        "overlay_bg": "rgba(39,40,34,0.90)",
         "scrollbar": "#75715e",
         "status_ok": "#a6e22e", "status_unchanged": "#75715e",
         "status_warn": "#fd971f", "status_error": "#f92672",
@@ -195,9 +247,12 @@ TOKENS: dict[str, dict[str, str]] = {
         "app_base": "#000000", "card": "#0a0a0a",
         "border": "#ffffff", "border_str": "#ffffff",
         "text": "#ffffff", "text_sub": "#e0e0e0", "text_hint": "#b0b0b0",
-        "accent": "#ffff00",
+        "icon": "#ffffff",
+        # 黄のアクセント上では黒文字（白抜きだと視認不能）。
+        "accent": "#ffff00", "on_accent": "#000000",
         "sel_bg": "rgba(255,255,0,0.35)", "hover_bg": "rgba(255,255,255,0.15)",
         "pressed_bg": "rgba(255,255,255,0.30)",
+        "overlay_bg": "rgba(0,0,0,0.92)",
         "scrollbar": "#ffffff",
         "status_ok": "#00ff00", "status_unchanged": "#b0b0b0",
         "status_warn": "#ffaa00", "status_error": "#ff3333",
@@ -215,10 +270,10 @@ def current_accent() -> QColor:
 
 
 # 現在テーマのトークン辞書。ThemeManager.apply() が更新するモジュール状態。
-_current_tokens: dict[str, str] = TOKENS["light"]
+_current_tokens: ThemeTokens = TOKENS["light"]
 
 
-def current_tokens() -> dict[str, str]:
+def current_tokens() -> ThemeTokens:
     """現在適用中のテーマのトークン辞書を返す（トースト等のカスタム描画用）。"""
     return _current_tokens
 
@@ -242,7 +297,7 @@ def app_font() -> QFont:
     return f
 
 
-def _palette(t: dict[str, str]) -> QPalette:
+def _palette(t: ThemeTokens) -> QPalette:
     """トークンから QPalette を生成（dark/light 共通）。"""
     p = QPalette()
     window = QColor(t["surface"])
@@ -264,7 +319,7 @@ def _palette(t: dict[str, str]) -> QPalette:
         QPalette.ColorRole.ToolTipText: text,
         QPalette.ColorRole.PlaceholderText: disabled,
         QPalette.ColorRole.Highlight: accent,
-        QPalette.ColorRole.HighlightedText: QColor("#ffffff"),
+        QPalette.ColorRole.HighlightedText: QColor(t["on_accent"]),
         QPalette.ColorRole.Link: accent,
         QPalette.ColorRole.Mid: QColor(t["border"]),
     }
@@ -284,7 +339,7 @@ def _palette(t: dict[str, str]) -> QPalette:
     return p
 
 
-def _stylesheet(t: dict[str, str]) -> str:
+def _stylesheet(t: ThemeTokens) -> str:
     """トークンからアプリ全体の QSS を生成（dark/light 共通）。"""
     return f"""
 /* ---- ビュー（一覧 / ツリー / アイコン） ---- */
@@ -383,7 +438,7 @@ QLineEdit {{
     border-radius: 6px;
     padding: 4px 8px;
     selection-background-color: {t['accent']};
-    selection-color: #ffffff;
+    selection-color: {t['on_accent']};
 }}
 
 QLineEdit:focus {{

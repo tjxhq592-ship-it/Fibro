@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.gui.motion import MOTION, make_animation
+from app.gui.theme import current_tokens
 
 # Qt が縦サイズ無制限に使う番兵値（QWIDGETSIZE_MAX）。
 _QWIDGETSIZE_MAX = (1 << 24) - 1
@@ -33,14 +34,12 @@ _PATH_RIGHT = "M9 6l6 6-6 6"
 _PATH_DOWN = "M6 9l6 6 6-6"
 
 
-def _chevron_pixmap(collapsed: bool, dark: bool = True) -> QPixmap:
+def _chevron_pixmap(collapsed: bool) -> QPixmap:
     """折りたたみ状態に応じた chevron QPixmap を返す。
 
-    dark=True  → stroke #9598a0（ダークテーマの text_hint）
-    dark=False → stroke #6b6d75（ライトテーマの text_hint）
-    テーマに合わせた色にしておき、どちらも可読性の高いグレー。
+    stroke は現在テーマの text_hint トークン（補助的な図形＝ヒント系の色）。
     """
-    color = "#9598a0" if dark else "#6b6d75"
+    color = current_tokens()["text_hint"]
     path = _PATH_RIGHT if collapsed else _PATH_DOWN
     svg = _CHEVRON_SVG.format(color=color, path=path).encode()
     px = QPixmap()
@@ -75,17 +74,8 @@ class _HeaderBar(QFrame):
         self._update_chevron(collapsed=False)
 
     def _update_chevron(self, collapsed: bool) -> None:
-        """テーマを QApplication のパレットから判定してアイコンを更新する。"""
-        from PySide6.QtWidgets import QApplication
-        from PySide6.QtGui import QPalette
-        app = QApplication.instance()
-        dark = True
-        if app is not None:
-            bg = app.palette().color(QPalette.ColorRole.Window)
-            # ウィンドウ背景の輝度が低い（<128）ならダーク
-            dark = bg.lightness() < 128
-        px = _chevron_pixmap(collapsed, dark=dark)
-        self._chevron_label.setPixmap(px)
+        """現在テーマのトークン色でシェブロンアイコンを更新する。"""
+        self._chevron_label.setPixmap(_chevron_pixmap(collapsed))
 
     def set_collapsed(self, collapsed: bool) -> None:
         self._update_chevron(collapsed)

@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QGridLayout, QHBoxLayout,
     QInputDialog, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox,
@@ -62,6 +62,7 @@ class RenameDialog(QDialog):
         # テーマはプロジェクト範囲設定（MainWindow.project_settings）に保存される
         _ps = getattr(parent, "project_settings", None)
         _theme = _ps.get("theme", "light") if _ps is not None else "light"
+        self._theme = _theme
         self._status_color = _build_status_color(_theme)
 
         self._build_ui()
@@ -133,7 +134,11 @@ class RenameDialog(QDialog):
         layout.addLayout(grid)
 
         self.rule_error = QLabel()
-        self.rule_error.setStyleSheet("color: #c62828;")
+        # インライン QSS はテーマ QSS より優先され続けるため、QPalette で着色する
+        pal = self.rule_error.palette()
+        pal.setColor(QPalette.ColorRole.WindowText,
+                     status_colors(self._theme)["error"])
+        self.rule_error.setPalette(pal)
         layout.addWidget(self.rule_error)
 
         self.table = QTableWidget(0, 3)

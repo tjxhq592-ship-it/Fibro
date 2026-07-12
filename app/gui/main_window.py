@@ -429,7 +429,7 @@ class MainWindow(QMainWindow):
         top = QHBoxLayout()
         # パンくずの左隣: プロジェクトメニューボタン
         self.project_menu_btn = QToolButton()
-        self.project_menu_btn.setIcon(material_icon("menu", dark=self._is_dark()))
+        self.project_menu_btn.setIcon(material_icon("menu"))
         self.project_menu_btn.setToolTip(_("tip_project_menu"))
         self.project_menu_btn.setAutoRaise(True)
         self.project_menu_btn.clicked.connect(self._show_project_menu)
@@ -450,22 +450,21 @@ class MainWindow(QMainWindow):
         top.addWidget(self.breadcrumb, stretch=1)
         # ショートカット一覧の左隣: 設定ボタン（歯車）
         self.settings_btn = QToolButton()
-        self.settings_btn.setIcon(material_icon("settings", dark=self._is_dark()))
+        self.settings_btn.setIcon(material_icon("settings"))
         self.settings_btn.setToolTip(_("tip_settings"))
         self.settings_btn.setAutoRaise(True)
         self.settings_btn.clicked.connect(self._show_settings_menu)
         top.addWidget(self.settings_btn)
         # パンくず行の右端: ショートカット一覧ボタン（⌘）
         self.shortcuts_btn = QToolButton()
-        self.shortcuts_btn.setIcon(
-            material_icon("keyboard_command_key", dark=self._is_dark()))
+        self.shortcuts_btn.setIcon(material_icon("keyboard_command_key"))
         self.shortcuts_btn.setToolTip(_("tip_shortcuts"))
         self.shortcuts_btn.setAutoRaise(True)
         self.shortcuts_btn.clicked.connect(self._show_shortcuts)
         top.addWidget(self.shortcuts_btn)
         # ショートカット一覧の右隣: ヘルプボタン（?）
         self.help_btn = QToolButton()
-        self.help_btn.setIcon(material_icon("help", dark=self._is_dark()))
+        self.help_btn.setIcon(material_icon("help"))
         self.help_btn.setToolTip(_("tip_help"))
         self.help_btn.setAutoRaise(True)
         self.help_btn.clicked.connect(self._show_help_menu)
@@ -2130,14 +2129,12 @@ class MainWindow(QMainWindow):
 
     def _refresh_theme_icons(self) -> None:
         """テーマ変更後にテーマ色依存の UI（アイコン・サイドバー）を再描画する。"""
-        dark = self._is_dark()
         self.favorites.refresh()
         self.recent_sidebar.refresh()
-        self.project_menu_btn.setIcon(material_icon("menu", dark=dark))
-        self.settings_btn.setIcon(material_icon("settings", dark=dark))
-        self.shortcuts_btn.setIcon(
-            material_icon("keyboard_command_key", dark=dark))
-        self.help_btn.setIcon(material_icon("help", dark=dark))
+        self.project_menu_btn.setIcon(material_icon("menu"))
+        self.settings_btn.setIcon(material_icon("settings"))
+        self.shortcuts_btn.setIcon(material_icon("keyboard_command_key"))
+        self.help_btn.setIcon(material_icon("help"))
 
     def rename_single(self) -> None:
         """F2: 選択中1件をその場でリネーム（RenameExecutor 経由で Undo 可）。"""

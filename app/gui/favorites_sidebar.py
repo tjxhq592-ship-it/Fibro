@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.gui.icons import material_icon
+from app.gui.theme import current_tokens
 from app.i18n import _
 from app.models.favorite import FavoriteStore
 
@@ -157,16 +158,6 @@ class FavoritesSidebar(QWidget):
         """後方互換: 旧 API で list.count() などを参照するテスト向け。"""
         return self.tree
 
-    @staticmethod
-    def _is_dark() -> bool:
-        """QApplication のパレットからダークテーマかどうかを判定する。"""
-        from PySide6.QtGui import QPalette
-        from PySide6.QtWidgets import QApplication
-        app = QApplication.instance()
-        if app is None:
-            return True
-        return app.palette().color(QPalette.ColorRole.Window).lightness() < 128
-
     def _label_for(self, fav) -> str:
         # 到達性は同期で見ない（GUI を固めるため）。後から非同期で印を付ける。
         # アイコンは item.setIcon() で付与するため、ラベルには含めない。
@@ -180,7 +171,7 @@ class FavoritesSidebar(QWidget):
     def _make_item(self, fav) -> QTreeWidgetItem:
         item = QTreeWidgetItem([self._label_for(fav)])
         icon_name = "folder_special" if fav.is_group else "star"
-        item.setIcon(0, material_icon(icon_name, dark=self._is_dark()))
+        item.setIcon(0, material_icon(icon_name))
         item.setData(0, _ID_ROLE, fav.id)
         tooltip = fav.path or fav.label
         if fav.note:
@@ -253,7 +244,7 @@ class FavoritesSidebar(QWidget):
             item.setData(0, Qt.ItemDataRole.ForegroundRole, None)  # 既定色へ戻す
         else:
             item.setText(0, base + mark)
-            item.setForeground(0, QColor("#9e9e9e"))
+            item.setForeground(0, QColor(current_tokens()["text_hint"]))
 
     def _recheck_reachability(self) -> None:
         """現在のお気に入りの到達性を再確認（定期実行）。回復で印が消える。"""

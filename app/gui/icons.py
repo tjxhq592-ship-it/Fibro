@@ -1,12 +1,15 @@
 """Feather Icons (https://feathericons.com, MIT License) の埋め込み。
 
 SVG を文字列で同梱し、テーマに応じた stroke 色で 24x24 にレンダリングする。
-外部アセットファイル不要で PyInstaller 同梱も自動。
+色は現在テーマの icon トークン（TOKENS 管理）を既定とし、呼び出し側で
+明示指定も可能。外部アセットファイル不要で PyInstaller 同梱も自動。
 """
 from __future__ import annotations
 
 from PySide6.QtCore import QByteArray
 from PySide6.QtGui import QIcon, QPixmap
+
+from app.gui.theme import current_tokens
 
 _SVG_TEMPLATE = (
     '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
@@ -131,23 +134,23 @@ _PATHS = {
             '2.3z"/>',
 }
 
-LIGHT_COLOR = "#404040"
-DARK_COLOR = "#d8d8d8"
+def _icon_color(color: str | None) -> str:
+    """省略時は現在テーマの icon トークンで描く（テーマ切替後の再生成で追従）。"""
+    return color if color is not None else current_tokens()["icon"]
 
 
-def feather_icon(name: str, dark: bool = False) -> QIcon:
+def feather_icon(name: str, color: str | None = None) -> QIcon:
     """名前と現在テーマからアイコンを生成。"""
-    color = DARK_COLOR if dark else LIGHT_COLOR
-    svg = _SVG_TEMPLATE.format(color=color, body=_PATHS[name])
+    svg = _SVG_TEMPLATE.format(color=_icon_color(color), body=_PATHS[name])
     pixmap = QPixmap()
     pixmap.loadFromData(QByteArray(svg.encode()), "SVG")
     return QIcon(pixmap)
 
 
-def material_icon(name: str, dark: bool = False) -> QIcon:
+def material_icon(name: str, color: str | None = None) -> QIcon:
     """Material Symbols のアイコンを名前と現在テーマから生成。"""
-    color = DARK_COLOR if dark else LIGHT_COLOR
-    svg = _MATERIAL_SVG_TEMPLATE.format(color=color, body=_MATERIAL_PATHS[name])
+    svg = _MATERIAL_SVG_TEMPLATE.format(
+        color=_icon_color(color), body=_MATERIAL_PATHS[name])
     pixmap = QPixmap()
     pixmap.loadFromData(QByteArray(svg.encode()), "SVG")
     return QIcon(pixmap)

@@ -129,6 +129,48 @@ class TestThemeTokenIntegrity:
             assert sc["error"] == QColor(TOKENS[key]["status_error"])
 
 
+class TestColorThemeImprovement:
+    """カラーテーマ改善指示書（on_accent/icon/overlay_bg・配色修正）の回帰テスト。"""
+
+    def test_new_tokens_in_all_themes(self):
+        from app.gui.theme import TOKENS
+        for name, tokens in TOKENS.items():
+            for key in ("on_accent", "icon", "overlay_bg"):
+                assert key in tokens, f"{name} に {key} がない"
+
+    def test_highlighted_text_uses_on_accent(self, qapp, tmp_path):
+        """ハイコントラスト（黄アクセント）の選択文字が白抜きにならない。"""
+        from PySide6.QtGui import QColor, QPalette
+        from app.gui.theme import TOKENS, ThemeManager
+        tm = ThemeManager(tmp_path / "settings.json")
+        tm.apply(qapp, "high_contrast")
+        color = qapp.palette().color(QPalette.ColorRole.HighlightedText)
+        assert color == QColor(TOKENS["high_contrast"]["on_accent"])
+        assert color == QColor("#000000")
+        tm.apply(qapp, "light")
+
+    def test_qss_selection_color_uses_on_accent(self):
+        """QLineEdit の selection-color がハードコード #ffffff でない。"""
+        from app.gui.theme import TOKENS, _stylesheet
+        t = TOKENS["high_contrast"]
+        qss = _stylesheet(t)
+        assert f"selection-color: {t['on_accent']}" in qss
+
+    def test_monokai_accent_differs_from_status_ok(self):
+        """accent と status_ok の意味論的衝突（同色）が解消されている。"""
+        from app.gui.theme import TOKENS
+        assert TOKENS["monokai"]["accent"] != TOKENS["monokai"]["status_ok"]
+
+    def test_one_dark_elevation_order(self):
+        """ダークの Elevation 原則: app_base < bg < surface < elevated。"""
+        from PySide6.QtGui import QColor
+        from app.gui.theme import TOKENS
+        t = TOKENS["one_dark"]
+        levels = [QColor(t[k]).lightness()
+                  for k in ("app_base", "bg", "surface", "elevated")]
+        assert levels == sorted(levels) and len(set(levels)) == len(levels)
+
+
 class TestSingleRename:
     def test_f2_rename_via_executor(self, qapp, tmp_path):
         """F2 相当の単一リネームが RenameExecutor 経由で Undo 可能。"""

@@ -10,6 +10,8 @@ from PySide6.QtCore import QEvent, QObject, QSize, Qt, QTimer
 from PySide6.QtGui import QFont, QFontMetrics
 from PySide6.QtWidgets import QApplication, QLabel
 
+from app.gui.theme import current_tokens
+
 
 class _ZoomToast(QLabel):
     """ビュー中央に一時表示する倍率インジケーター。"""
@@ -19,21 +21,27 @@ class _ZoomToast(QLabel):
     def __init__(self, parent) -> None:
         super().__init__(parent)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setStyleSheet(
-            "background: rgba(30,30,30,200);"
-            "color: #fff;"
-            "border-radius: 6px;"
-            "padding: 4px 10px;"
-            "font-size: 13pt;"
-            "font-weight: bold;"
-        )
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.hide()
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.hide)
 
+    def _apply_theme_style(self) -> None:
+        """表示のたびに現在テーマのトークンで着色する（テーマ切替へ追従）。"""
+        t = current_tokens()
+        self.setStyleSheet(
+            f"background: {t['overlay_bg']};"
+            f"color: {t['text']};"
+            f"border: 1px solid {t['border_str']};"
+            "border-radius: 6px;"
+            "padding: 4px 10px;"
+            "font-size: 13pt;"
+            "font-weight: bold;"
+        )
+
     def show_scale(self, scale: float) -> None:
+        self._apply_theme_style()
         self.setText(f"{round(scale * 100)}%")
         self.adjustSize()
         # 親（ビューのビューポート）中央に配置

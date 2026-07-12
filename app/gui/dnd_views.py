@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
     QTreeView,
 )
 
+from app.gui.theme import current_tokens
+
 # 右ボタンD&D / Ctrl+コピーD&D を識別するための marker MIME 形式
 _RIGHT_DRAG_MIME = "application/x-fibro-rightdrag"
 _COPY_DRAG_MIME = "application/x-fibro-copydrag"
@@ -47,12 +49,13 @@ def _make_drag_pixmap(view, indexes: list[QModelIndex]) -> QPixmap:
                           Qt.ItemDataRole.DecorationRole)
         if isinstance(data, QIcon):
             icon = data
+    t = current_tokens()
     size = 48
     base = (icon.pixmap(QSize(size, size)) if icon is not None
             else QPixmap(size, size))
     if base.isNull() or base.width() == 0:
         base = QPixmap(size, size)
-        base.fill(QColor(120, 120, 120))
+        base.fill(QColor(t["surface"]))
     pixmap = QPixmap(base.size())
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
@@ -70,10 +73,10 @@ def _make_drag_pixmap(view, indexes: list[QModelIndex]) -> QPixmap:
         h = 18
         x = pixmap.width() - w
         y = pixmap.height() - h
-        painter.setBrush(QColor("#3d7eff"))
+        painter.setBrush(QColor(t["accent"]))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(x, y, w, h, 9, 9)
-        painter.setPen(QColor("white"))
+        painter.setPen(QColor(t["on_accent"]))
         painter.drawText(QRect(x, y, w, h), Qt.AlignmentFlag.AlignCenter, badge)
     painter.end()
     return pixmap

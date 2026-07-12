@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from app.i18n import _
 from app.gui.icons import material_icon
+from app.gui.theme import current_tokens
 
 _PATH_ROLE = Qt.ItemDataRole.UserRole       # 実パス
 _ID_ROLE = Qt.ItemDataRole.UserRole + 1     # index（到達性更新用）
@@ -99,28 +100,18 @@ class PlacesSidebar(QWidget):
         from app.places import get_all_places
         self._places = get_all_places()
         self.list.clear()
-        dark = self._is_dark()
         for i, place in enumerate(self._places):
             key = os.path.normcase(place.path)
             display = self._custom_names.get(key, place.name)
             item = QListWidgetItem(display)
             icon_name = _KIND_ICON.get(place.kind, "hard_drive")
-            item.setIcon(material_icon(icon_name, dark=dark))
+            item.setIcon(material_icon(icon_name))
             item.setData(_PATH_ROLE, place.path)
             item.setData(_ID_ROLE, i)
             item.setData(_NAME_ROLE, place.name)   # 自動検出名（既定値）
             item.setToolTip(place.path)
             self.list.addItem(item)
 
-    @staticmethod
-    def _is_dark() -> bool:
-        """QApplication のパレットからダークテーマかどうかを判定する。"""
-        from PySide6.QtWidgets import QApplication
-        from PySide6.QtGui import QPalette
-        app = QApplication.instance()
-        if app is None:
-            return True
-        return app.palette().color(QPalette.ColorRole.Window).lightness() < 128
 
     def _check_reachability(self) -> None:
         """到達性確認を非同期で開始（起動500ms後）。"""
@@ -145,7 +136,7 @@ class PlacesSidebar(QWidget):
                     place = self._places[idx]
                     item.setToolTip(place.path)
                 else:
-                    item.setForeground(QColor("#9e9e9e"))
+                    item.setForeground(QColor(current_tokens()["text_hint"]))
                     place = self._places[idx]
                     item.setToolTip(f"{place.path}  （到達不可）")
                 break
