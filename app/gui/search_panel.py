@@ -4,13 +4,14 @@
 """
 from __future__ import annotations
 
+import enum
 import threading
 from pathlib import Path
 
 from PySide6.QtCore import QThread, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QPushButton, QVBoxLayout, QWidget,
+    QProgressBar, QPushButton, QVBoxLayout, QWidget,
 )
 
 from app.engine.index_engine import SearchIndex
@@ -32,6 +33,14 @@ _KIND_ICON = {
 
 # 「ファイルの内容」チェックボックス1つで有効になる内容検索モード一式
 _CONTENT_MODES = {SearchMode.TEXT, SearchMode.EXCEL, SearchMode.DOCUMENT}
+
+
+class SearchState(enum.Enum):
+    """検索パネルの状態。UI の有効/無効・表示切替は _set_state() に集約する。"""
+
+    IDLE = "idle"            # 初期状態・リセット直後（ルートはタブに追従）
+    SEARCHING = "searching"  # worker 実行中（ルート固定・進行バー表示）
+    RESULTS = "results"      # 完了/キャンセル後の結果表示中（ルート固定）
 
 
 class SearchWorker(QThread):
@@ -111,10 +120,16 @@ class SearchPanel(QWidget):
     """検索UI。file_selected(path) でメインウィンドウにファイル選択を依頼。"""
 
     file_selected = Signal(str)  # ファイルを選択（親フォルダへ navigate して select）
+    # リセットで IDLE に戻った直後、現在のアクティブタブのディレクトリで
+    # set_root() し直してもらうための依頼（main_window が接続）
+    root_refresh_requested = Signal()
 
     def __init__(self, parent=None, settings=None) -> None:
         super().__init__(parent)
         self._worker: SearchWorker | None = None
+        self._state = SearchState.IDLE
+        self._pinned_root: str | None = None  # 検索開始時に固定したルート
+        self._cancelling = False  # キャンセル押下〜worker 停止確定までの間
         # wait() に間に合わなかったワーカーの延命リスト。親から切り離した上で
         # Python 参照を保持しないと、走行中に C++ 側が破棄されて qFatal で落ちる
         # （docs/investigation/search_cancel_crash_report.md）
@@ -130,6 +145,7 @@ class SearchPanel(QWidget):
         self._flush_timer.setInterval(100)  # 100ms ごと = 最大10回/秒
         self._flush_timer.timeout.connect(self._flush_hits)
         self._build_ui()
+        self._set_state(SearchState.IDLE)
         self._load_options()  # 保存されたオプションを復元（signal 接続前）
         # 復元後に signal 接続 → 以降のユーザー変更だけが保存される
         for check in (self.recursive_check, self.index_check):
@@ -140,8 +156,40 @@ class SearchPanel(QWidget):
         self.keyword_edit.textChanged.connect(self._schedule_incremental)
 
     def set_root(self, path: str) -> None:
+        # SEARCHING/RESULTS 中はルート固定。ナビゲーション自体は妨げず、
+        # 追従だけを無視する（リセットで解除）
+        if self._state is not SearchState.IDLE:
+            return
         self._root = path
-        self.root_label.setText(_("search_root").format(path=path))
+        self._update_root_label()
+
+    # ---- 状態機械 ----
+    def _set_state(self, state: SearchState) -> None:
+        """全状態遷移の唯一の入口。UI の有効/無効・表示切替をここに集約する。"""
+        self._state = state
+        searching = state is SearchState.SEARCHING
+        self.search_btn.setEnabled(not searching)
+        self.cancel_btn.setEnabled(searching and not self._cancelling)
+        self.reset_btn.setEnabled(state is SearchState.RESULTS)
+        if searching:
+            self.progress_bar.setRange(0, 0)  # インジターミネート開始
+            self.progress_bar.show()
+        else:
+            # 確定レンジに戻してスタイルアニメーションを止めてから隠す
+            self.progress_bar.hide()
+            self.progress_bar.setRange(0, 1)
+            self.progress_bar.reset()
+        self._update_root_label()
+
+    def _update_root_label(self) -> None:
+        if self._state is SearchState.IDLE:
+            self.root_label.setText(_("search_root").format(path=self._root))
+            self.root_label.setToolTip("")
+        else:
+            path = self._pinned_root or self._root
+            self.root_label.setText(
+                _("search_root_locked").format(path=path))
+            self.root_label.setToolTip(_("search_root_locked_tip"))
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -157,13 +205,27 @@ class SearchPanel(QWidget):
         self.keyword_edit.returnPressed.connect(self.start_search)
         self.search_btn = QPushButton(_("search_btn"))
         self.cancel_btn = QPushButton(_("search_cancel_btn"))
-        self.cancel_btn.setEnabled(False)
+        self.reset_btn = QPushButton(_("search_reset_btn"))
         self.search_btn.clicked.connect(self.start_search)
-        self.cancel_btn.clicked.connect(self.cancel_search)
+        self.cancel_btn.clicked.connect(self._on_cancel_clicked)
+        self.reset_btn.clicked.connect(self.reset_results)
         row.addWidget(self.keyword_edit, stretch=1)
         row.addWidget(self.search_btn)
         row.addWidget(self.cancel_btn)
+        row.addWidget(self.reset_btn)
         layout.addLayout(row)
+
+        # 検索入力欄の直下: SEARCHING 中のみ流れるインジターミネートバー。
+        # 非表示中もレイアウト高さを保持し、状態遷移で行がガタつかないようにする
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setObjectName("searchProgress")
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedHeight(3)
+        policy = self.progress_bar.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)
+        self.progress_bar.setSizePolicy(policy)
+        self.progress_bar.hide()
+        layout.addWidget(self.progress_bar)
 
         modes = QHBoxLayout()
         self.mode_filename = QCheckBox(_("search_filename"))
@@ -209,11 +271,8 @@ class SearchPanel(QWidget):
         if self.keyword_edit.text().strip():
             self.start_search()
         else:
-            self.cancel_search()
-            self.results.clear()
-            self.status_label.setText("")
-            self.search_btn.setEnabled(True)
-            self.cancel_btn.setEnabled(False)
+            # 空文字はリセット相当（結果クリア + ルート固定解除 + IDLE）
+            self.reset_results()
 
     def current_options(self) -> SearchOptions:
         modes: set[SearchMode] = set()
@@ -233,10 +292,14 @@ class SearchPanel(QWidget):
         if not options.keyword:
             return
         self.cancel_search()  # 進行中があれば止める
+        self._cancelling = False
+        if self._pinned_root is None:
+            # IDLE からの新規検索はここでルートを固定する。RESULTS からの
+            # 再検索は固定済みルートを使い続ける（リセットまで対象不変）
+            self._pinned_root = self._root
         self.results.clear()
+        self._set_state(SearchState.SEARCHING)
         self.status_label.setText(_("search_running"))
-        self.search_btn.setEnabled(False)
-        self.cancel_btn.setEnabled(True)
 
         # インデックスは「ファイル名のみ・通常一致（ワイルドカード無し）・再帰」
         # のときだけ有効
@@ -249,11 +312,48 @@ class SearchPanel(QWidget):
         self._total_hits = 0
         self._capped = False
         self._flush_timer.start()
-        self._worker = SearchWorker(self._root, options, use_index, self)
+        self._worker = SearchWorker(self._pinned_root, options, use_index,
+                                    self)
         self._worker.hits_batch.connect(self._on_hits_batch)
         self._worker.status.connect(self.status_label.setText)
         self._worker.finished_ok.connect(self._on_finished)
         self._worker.start()
+
+    def _on_cancel_clicked(self) -> None:
+        """キャンセルボタン: cancel フラグだけ立てて即 UI 応答する。
+
+        合流待ちをしないため GUI はブロックしない。worker は次のチェック
+        ポイントで停止して finished_ok を出すので、停止確定は
+        _on_finished() 側で検知して RESULTS へ遷移する。
+        """
+        if self._state is not SearchState.SEARCHING or self._worker is None:
+            return
+        self._cancelling = True
+        self._set_state(SearchState.SEARCHING)  # cancel_btn 無効化（多重押下防止）
+        self.status_label.setText(_("search_cancelling"))
+        self._worker.cancel()
+
+    def reset_results(self) -> None:
+        """リセット: 結果・カウンタをクリアしルート固定を解除して IDLE へ。
+
+        キーワード入力欄は保持する（絞り込みやり直しのため）。ボタンは
+        RESULTS でのみ有効だが、パネル閉鎖時の暗黙リセット（main_window の
+        Ctrl+F トグル/ドック✕）とインクリメンタルの空文字経路からは
+        他状態でも呼ばれる。
+        """
+        if self._worker is not None:
+            self.cancel_search()  # SEARCHING 中は合流してから片付ける
+        self._cancelling = False
+        self._flush_timer.stop()
+        self._pending.clear()
+        self.results.clear()
+        self._total_hits = 0
+        self._capped = False
+        self.status_label.setText("")
+        self._pinned_root = None
+        self._set_state(SearchState.IDLE)
+        # IDLE 復帰後にルート追従を即時回復してもらう（main_window 接続時）
+        self.root_refresh_requested.emit()
 
     def cancel_search(self) -> None:
         self._flush_timer.stop()
@@ -295,7 +395,10 @@ class SearchPanel(QWidget):
         for hit in hits[:room]:
             rel = hit.path
             try:
-                rel = str(Path(hit.path).relative_to(self._root))
+                # 相対表示の基準も固定ルート。走行中に IDLE へ戻る経路は
+                # 無いが、フォールバックとして現在ルートを使う
+                base = self._pinned_root or self._root
+                rel = str(Path(hit.path).relative_to(base))
             except ValueError:
                 pass
             text = f"{_KIND_ICON[hit.kind]} {rel}"
@@ -317,6 +420,8 @@ class SearchPanel(QWidget):
         for item in batch:
             self.results.addItem(item)
         self.results.setUpdatesEnabled(True)
+        if self._cancelling:
+            return  # 「キャンセルしています…」表示を維持（積み増しは継続）
         if self._capped:
             self.status_label.setText(
                 _("search_cap_running").format(max=MAX_RESULTS))
@@ -341,8 +446,13 @@ class SearchPanel(QWidget):
     def _on_finished(self, stats: SearchStats) -> None:
         self._flush_hits()
         self._flush_timer.stop()
-        self.search_btn.setEnabled(True)
-        self.cancel_btn.setEnabled(False)
+        cancelled = self._cancelling
+        self._cancelling = False
+        self._set_state(SearchState.RESULTS)  # 0件・キャンセルでも RESULTS
+        if cancelled:
+            self.status_label.setText(
+                _("search_cancelled_n").format(n=self.results.count()))
+            return
         scanned = stats.scanned
         skipped = stats.skipped
         if self._capped:

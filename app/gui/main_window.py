@@ -374,6 +374,13 @@ class MainWindow(QMainWindow):
     def eventFilter(self, obj, event) -> bool:  # noqa: N802 — Qt API
         """Ctrl+Tab / Ctrl+Shift+Tab をタブ切替に割り当てる。"""
         from PySide6.QtCore import QEvent
+        # 検索ドックの✕での閉鎖 = 検索パネルの暗黙リセット。
+        # hide/show を経由するフロート化等と区別するため Close だけを見る
+        if (event.type() == QEvent.Type.Close
+                and obj is getattr(self, "search_dock", None)
+                and self.search_panel is not None):
+            self.search_panel.reset_results()
+            return super().eventFilter(obj, event)
         if event.type() == QEvent.Type.KeyPress:
             mods = event.modifiers()
             if mods & Qt.KeyboardModifier.ControlModifier:
@@ -2169,12 +2176,22 @@ class MainWindow(QMainWindow):
             self.search_panel = SearchPanel(settings=self.theme_manager)
             self.search_panel.file_selected.connect(
                 self._on_search_file_selected)
+            # リセット/暗黙リセットで IDLE に戻った直後、固定中に無視した
+            # ナビゲーションぶんのルート追従を即時回復する
+            self.search_panel.root_refresh_requested.connect(
+                self._on_search_root_refresh)
             self.search_dock = QDockWidget(_("search_title"), self)
             self.search_dock.setWidget(self.search_panel)
             self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea,
                                self.search_dock)
+            # ✕ボタンでの閉鎖を eventFilter で拾い暗黙リセットする
+            self.search_dock.installEventFilter(self)
             self.search_dock.hide()
         return self.search_panel
+
+    def _on_search_root_refresh(self) -> None:
+        if self.search_panel is not None:
+            self.search_panel.set_root(self.current_path)
 
     def toggle_search(self) -> None:
         self._ensure_search_panel()
@@ -2182,6 +2199,8 @@ class MainWindow(QMainWindow):
         left_w = sp.sizes()[0]
 
         if self.search_dock.isVisible():
+            # Ctrl+F トグルでの閉鎖 = 暗黙リセット（SEARCHING なら中断込み）
+            self.search_panel.reset_results()
             self.search_dock.hide()
         else:
             self.search_panel.set_root(self.current_path)

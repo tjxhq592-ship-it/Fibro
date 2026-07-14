@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -42,8 +43,14 @@ def detect_encoding(filepath: str | Path) -> str | None:
 
 def search_in_text(filepath: str | Path, keyword: str,
                    case_sensitive: bool = False,
-                   max_hits: int = 100) -> Iterator[tuple[int, str]]:
-    """行単位ストリーミングでキーワード検索。(行番号, 行内容) を逐次返す。"""
+                   max_hits: int = 100,
+                   cancel: threading.Event | None = None
+                   ) -> Iterator[tuple[int, str]]:
+    """行単位ストリーミングでキーワード検索。(行番号, 行内容) を逐次返す。
+
+    cancel はヒットの無い巨大ファイルでも中断できるよう行チャンク単位で
+    確認する（ヒット時の中断は呼び出し側が yield 毎に行う）。
+    """
     encoding = detect_encoding(filepath)
     if encoding is None:
         return
@@ -52,6 +59,9 @@ def search_in_text(filepath: str | Path, keyword: str,
     try:
         with open(filepath, encoding=encoding, errors="replace") as f:
             for lineno, line in enumerate(f, start=1):
+                if (cancel is not None and lineno % 512 == 0
+                        and cancel.is_set()):
+                    return
                 haystack = line if case_sensitive else line.lower()
                 if needle in haystack:
                     yield lineno, line.rstrip("\r\n")[:200]

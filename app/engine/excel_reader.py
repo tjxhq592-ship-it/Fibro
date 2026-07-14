@@ -7,6 +7,7 @@ zip 直読みして「文字列キーワードが存在しないブックを即�
 from __future__ import annotations
 
 import re
+import threading
 import zipfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -44,7 +45,8 @@ def _load_xlrd():
 _NUMERIC_RE = re.compile(r"^[\d.,\-+eE]+$")
 
 
-def may_contain_keyword(filepath: str | Path, keyword: str) -> bool:
+def may_contain_keyword(filepath: str | Path, keyword: str,
+                        cancel: threading.Event | None = None) -> bool:
     """sharedStrings.xml の高速プレフィルタ。
 
     False なら文字列セルにキーワードは確実に存在しない（本走査不要）。
@@ -66,6 +68,8 @@ def may_contain_keyword(filepath: str | Path, keyword: str) -> bool:
                        or (n.startswith("xl/worksheets/")
                            and n.endswith(".xml"))]
             for name in targets:
+                if cancel is not None and cancel.is_set():
+                    return False  # 中断: 本走査側も即 return する
                 text = xml_to_text(zf.read(name))
                 if needle in text.lower():
                     return True
@@ -76,14 +80,19 @@ def may_contain_keyword(filepath: str | Path, keyword: str) -> bool:
 
 def search_in_excel(filepath: str | Path, keyword: str,
                     case_sensitive: bool = False,
-                    max_hits: int = 100) -> Iterator[tuple[str, str, str]]:
+                    max_hits: int = 100,
+                    cancel: threading.Event | None = None
+                    ) -> Iterator[tuple[str, str, str]]:
     """全シートを走査し (シート名, セル番地, セル値) を逐次返す。
 
     read_only モードで開くため大きなブックでもメモリを食わない。
     開けないブックは ContentReadError を送出する（呼び出し側で skipped 計上）。
+    cancel はヒットの無いブックでも中断できるよう行単位で確認する。
     """
     needle = keyword if case_sensitive else keyword.lower()
-    if not may_contain_keyword(filepath, keyword):
+    if not may_contain_keyword(filepath, keyword, cancel=cancel):
+        return
+    if cancel is not None and cancel.is_set():
         return
     openpyxl, get_column_letter = _load_openpyxl()
     try:
@@ -101,6 +110,8 @@ def search_in_excel(filepath: str | Path, keyword: str,
                 ws.reset_dimensions()
             for row_idx, row in enumerate(ws.iter_rows(values_only=True),
                                           start=1):
+                if cancel is not None and cancel.is_set():
+                    return
                 for col_idx, value in enumerate(row, start=1):
                     if value is None:
                         continue
@@ -128,10 +139,13 @@ def _xls_cell_text(cell) -> str | None:
 
 def search_in_xls(filepath: str | Path, keyword: str,
                   case_sensitive: bool = False,
-                  max_hits: int = 100) -> Iterator[tuple[str, str, str]]:
+                  max_hits: int = 100,
+                  cancel: threading.Event | None = None
+                  ) -> Iterator[tuple[str, str, str]]:
     """.xls（旧形式）のセル値検索。xlrd 使用。
 
     開けないブックは ContentReadError を送出する（呼び出し側で skipped 計上）。
+    cancel は行単位で確認する。
     """
     needle = keyword if case_sensitive else keyword.lower()
     xlrd, get_column_letter = _load_xlrd()
@@ -143,6 +157,8 @@ def search_in_xls(filepath: str | Path, keyword: str,
     try:
         for sheet in book.sheets():
             for row_idx in range(sheet.nrows):
+                if cancel is not None and cancel.is_set():
+                    return
                 for col_idx in range(sheet.ncols):
                     text = _xls_cell_text(sheet.cell(row_idx, col_idx))
                     if text is None:

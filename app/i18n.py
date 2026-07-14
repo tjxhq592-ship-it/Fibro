@@ -271,6 +271,14 @@ _STRINGS: dict[str, dict[str, str]] = {
                            "en": "Searching… showing top {max} (too many matches — please refine)"},
     "search_building":    {"ja": "インデックス構築中…",  "en": "Building index…"},
     "search_updating":    {"ja": "インデックス更新中…",  "en": "Updating index…"},
+    "search_reset_btn":   {"ja": "リセット",             "en": "Reset"},
+    "search_cancelling":  {"ja": "キャンセルしています…", "en": "Cancelling…"},
+    "search_cancelled_n": {"ja": "キャンセルしました（{n}件まで表示）",
+                           "en": "Cancelled (showing first {n} results)"},
+    "search_root_locked": {"ja": "🔒 検索場所: {path}",  "en": "🔒 Search in: {path}"},
+    "search_root_locked_tip": {
+        "ja": "検索中・結果表示中はディレクトリを変更できません。リセットで解除されます",
+        "en": "Directory is locked while searching or showing results. Press Reset to unlock."},
 
     # ── プロパティダイアログ ──
     "prop_title":         {"ja": "プロパティ — {name}", "en": "Properties — {name}"},

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -31,12 +32,15 @@ def _load_pypdf():
 
 def search_in_pdf(filepath: str | Path, keyword: str,
                   case_sensitive: bool = False,
-                  max_hits: int = 100) -> Iterator[tuple[str, str]]:
+                  max_hits: int = 100,
+                  cancel: threading.Event | None = None
+                  ) -> Iterator[tuple[str, str]]:
     """全ページを走査し (位置ラベル, スニペット) を逐次返す。
 
     位置ラベルは「ページ {n}」、スニペットはヒット位置の前後合計200文字
     程度。暗号化 PDF は空パスワード復号を1回試み、失敗したらパース例外と
     同様に ContentReadError を送出する（呼び出し側で skipped 計上）。
+    cancel はページ単位で確認する（1ページの extract_text 途中は中断不可）。
     """
     needle = keyword if case_sensitive else keyword.lower()
     pypdf = _load_pypdf()
@@ -53,6 +57,8 @@ def search_in_pdf(filepath: str | Path, keyword: str,
 
     hits = 0
     for page_no in range(1, num_pages + 1):
+        if cancel is not None and cancel.is_set():
+            return
         try:
             raw = reader.pages[page_no - 1].extract_text() or ""
         except Exception as e:  # ページ単位のパース失敗

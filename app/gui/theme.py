@@ -612,6 +612,21 @@ QProgressBar#copyProgress::chunk {{
     margin: 1px;
 }}
 
+/* ---- 検索パネルの進行バー（3px・SEARCHING 中のみ表示のインジターミネート。
+        chunk は accent 帯の左右端を透明へフェードさせ「流れる」表現にする） ---- */
+QProgressBar#searchProgress {{
+    background: transparent;
+    border: none;
+    min-height: 3px;
+    max-height: 3px;
+}}
+
+QProgressBar#searchProgress::chunk {{
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 transparent, stop:0.25 {t['accent']},
+        stop:0.75 {t['accent']}, stop:1 transparent);
+}}
+
 /* ---- 進捗の中止ボタン（タブ閉じる ✕ と同系。hover で警告色） ---- */
 QToolButton#copyCancel {{
     color: {t['text_hint']};

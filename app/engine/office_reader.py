@@ -7,6 +7,7 @@ zip + XML 直読み方式で実装する（追加依存ゼロ・業務PC制約�
 from __future__ import annotations
 
 import re
+import threading
 import zipfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -20,13 +21,17 @@ _SLIDE_RE = re.compile(r"^ppt/slides/slide(\d+)\.xml$")
 
 def search_in_docx(filepath: str | Path, keyword: str,
                    case_sensitive: bool = False,
-                   max_hits: int = 100) -> Iterator[tuple[str, str]]:
+                   max_hits: int = 100,
+                   cancel: threading.Event | None = None
+                   ) -> Iterator[tuple[str, str]]:
     """word/document.xml を段落単位で検索し (位置ラベル, スニペット) を返す。
 
     ヘッダー/フッター/コメントはスコープ外。位置ラベルは「段落 {n}」、
     スニペットは該当段落の先頭200文字。
     開けない・必須エントリが無いファイルは ContentReadError を送出する
     （呼び出し側で skipped_read_error 計上）。
+    cancel は段落チャンク単位で確認する（document.xml の一括読み込み
+    自体は中断不可＝巨大単一ファイル読込はスコープ外）。
     """
     needle = keyword if case_sensitive else keyword.lower()
     try:
@@ -38,6 +43,8 @@ def search_in_docx(filepath: str | Path, keyword: str,
     text = xml_to_text(data, paragraph_tag=b"</w:p>")
     hits = 0
     for idx, para in enumerate(text.split("\n"), start=1):
+        if cancel is not None and idx % 512 == 0 and cancel.is_set():
+            return
         haystack = para if case_sensitive else para.lower()
         if needle in haystack:
             yield _("search_hit_paragraph").format(n=idx), para[:200]
@@ -48,12 +55,15 @@ def search_in_docx(filepath: str | Path, keyword: str,
 
 def search_in_pptx(filepath: str | Path, keyword: str,
                    case_sensitive: bool = False,
-                   max_hits: int = 100) -> Iterator[tuple[str, str]]:
+                   max_hits: int = 100,
+                   cancel: threading.Event | None = None
+                   ) -> Iterator[tuple[str, str]]:
     """ppt/slides/slide*.xml を検索し (位置ラベル, スニペット) を返す。
 
     スライド番号はファイル名から取得し数値順に走査（slide10 は slide2 の
     後）。ノートはスコープ外。位置ラベルは「スライド {n}」。
     開けない・必須エントリが無いファイルは ContentReadError を送出する。
+    cancel はスライド単位で確認する。
     """
     needle = keyword if case_sensitive else keyword.lower()
     hits = 0
@@ -67,6 +77,8 @@ def search_in_pptx(filepath: str | Path, keyword: str,
                 (int(m.group(1)), name)
                 for name in names if (m := _SLIDE_RE.match(name)))
             for number, name in slides:
+                if cancel is not None and cancel.is_set():
+                    return
                 text = xml_to_text(zf.read(name), paragraph_tag=b"</a:p>")
                 for para in text.split("\n"):
                     haystack = para if case_sensitive else para.lower()

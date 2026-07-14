@@ -151,7 +151,8 @@ def search(root: str | Path, options: SearchOptions,
                     stats.skipped_binary += 1
                 else:
                     for lineno, line in search_in_text(
-                            entry.path, keyword, options.case_sensitive):
+                            entry.path, keyword, options.case_sensitive,
+                            cancel=cancel):
                         if cancel.is_set():
                             return
                         yield SearchHit(entry.path, SearchMode.TEXT,
@@ -163,7 +164,8 @@ def search(root: str | Path, options: SearchOptions,
             # ため、for 文ごと try で囲む
             try:
                 for sheet, address, value in reader(
-                        entry.path, keyword, options.case_sensitive):
+                        entry.path, keyword, options.case_sensitive,
+                        cancel=cancel):
                     if cancel.is_set():
                         return
                     yield SearchHit(entry.path, SearchMode.EXCEL,
@@ -180,7 +182,8 @@ def search(root: str | Path, options: SearchOptions,
                 doc_reader = search_in_pptx
             try:
                 for label, snippet in doc_reader(
-                        entry.path, keyword, options.case_sensitive):
+                        entry.path, keyword, options.case_sensitive,
+                        cancel=cancel):
                     if cancel.is_set():
                         return
                     yield SearchHit(entry.path, SearchMode.DOCUMENT,
