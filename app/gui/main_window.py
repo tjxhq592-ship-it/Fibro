@@ -788,7 +788,14 @@ class MainWindow(QMainWindow):
             pane = self._tabs[index]
             self.primary_stack.setCurrentWidget(pane)
             self._set_active_pane(pane)
-            self.navigate(path)
+            # 保存タブの妥当性はここで初めて検証する。navigate が失敗（削除済み・
+            # 到達不可でディレクトリでない）したら既定ディレクトリへフォールバック
+            # し、タブタイトルも更新する（空ペインのまま残さない）。
+            if not self.navigate(path):
+                fallback = self._default_dir()
+                self.tab_bar.setTabText(index, self._tab_title(fallback))
+                self.tab_bar.setTabToolTip(index, fallback)
+                self.navigate(fallback)
             return
         pane = self._tabs[index]
         self.primary_stack.setCurrentWidget(pane)
@@ -899,8 +906,12 @@ class MainWindow(QMainWindow):
         起動時はタブ0枚の状態から、プロジェクト切替時は仮タブ1枚の後ろへ
         追加される。各タブは pending 登録し、選択時に遅延ロードする。
         """
+        # 保存タブの is_dir 検証はここでは行わない（ネットワークパスが混ざると
+        # 全タブ分の is_dir で起動がブロックしうる）。文字列であることだけ確認して
+        # pending 登録し、妥当性は各タブの初回アクティブ化時（_on_tab_changed の
+        # navigate）で1タブずつ検証する。
         saved = self.project_settings.get("tabs", [])
-        paths = ([p for p in saved if isinstance(p, str) and Path(p).is_dir()]
+        paths = ([p for p in saved if isinstance(p, str) and p]
                  if isinstance(saved, list) else [])
         if not paths:
             paths = [self._default_dir()]

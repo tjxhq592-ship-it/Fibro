@@ -246,20 +246,25 @@ def _resolve_lnk(lnk_path: str) -> str | None:
 def _drive_places() -> list[Place]:
     """A:〜Z: のうち実在するドライブを返す。C:/D: 等のローカル/USB/CD-ROM。
 
-    os.path.exists のみ使用（依存なし）。
+    A:〜Z: への os.path.exists 総当たりは、切断中のネットワークドライブが
+    割り当たっていると SMB タイムアウトで数秒ブロックしうる。存在ビット
+    マスクを即時に返す GetLogicalDrives でブロックなしに列挙する。
+    種別判定（GetDriveType）はリモートドライブへの問い合わせでブロック
+    しうるためここでは行わない（必要なら到達性チェック側のワーカーで）。
     """
     if not _IS_WINDOWS:
         return []
+    try:
+        import ctypes
+        mask = ctypes.windll.kernel32.GetLogicalDrives()
+    except Exception:   # noqa: BLE001 — 取得失敗時は空でフォールバック
+        return []
     results: list[Place] = []
-    for letter in string.ascii_uppercase:
-        path = f"{letter}:\\"
-        try:
-            if os.path.exists(path):
-                results.append(Place(
-                    name=f"{letter}:",
-                    path=path,
-                    kind="drive",
-                ))
-        except OSError:
-            continue
+    for i, letter in enumerate(string.ascii_uppercase):
+        if mask & (1 << i):
+            results.append(Place(
+                name=f"{letter}:",
+                path=f"{letter}:\\",
+                kind="drive",
+            ))
     return results

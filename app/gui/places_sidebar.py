@@ -1,11 +1,14 @@
 """クラウド/ネットワーク場所サイドバー。
 
 app.places.get_all_places() の結果を表示し、クリックでナビゲーション。
-到達性チェックは起動コストを抑えるため QTimer で 500ms 遅延後に非同期実行。
+場所の取得（SyncRoot レジストリ読み・ネットワークショートカットの COM 解決・
+ドライブ列挙）は起動をブロックしないようワーカースレッドで実行する。
+到達性チェックは places 確定後に QTimer で 500ms 遅延して非同期実行する。
 """
 from __future__ import annotations
 
 import os
+import sys
 
 from PySide6.QtCore import QEvent, QRunnable, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QColor
@@ -44,11 +47,49 @@ class _PlaceReachJob(QRunnable):
             self._emit(self._gen, idx, reachable(path))
 
 
+class _PlacesLoadJob(QRunnable):
+    """場所一覧の取得をバックグラウンドで行う（起動時の同期 I/O を排除）。
+
+    get_all_places() はレジストリ読み・ネットワークショートカットの
+    IShellLink COM 解決・ドライブ列挙を含む。COM をワーカースレッド自身の
+    アパートメントで初期化してから呼び、GUI スレッドの COM 状態に依存しない。
+    """
+
+    def __init__(self, gen: int, emit) -> None:
+        super().__init__()
+        self._gen = gen
+        self._emit = emit
+
+    def run(self) -> None:
+        co_inited = False
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                ctypes.windll.ole32.CoInitialize(None)
+                co_inited = True
+            except Exception:   # noqa: BLE001 — COM 初期化失敗でも列挙は続行
+                pass
+        try:
+            from app.places import get_all_places
+            places = get_all_places()
+        except Exception:       # noqa: BLE001 — 取得失敗は空リストでフォールバック
+            places = []
+        finally:
+            if co_inited:
+                try:
+                    import ctypes
+                    ctypes.windll.ole32.CoUninitialize()
+                except Exception:   # noqa: BLE001
+                    pass
+        self._emit(self._gen, places)
+
+
 class PlacesSidebar(QWidget):
     """クラウド/ネットワーク場所の一覧ウィジェット。"""
 
     path_selected = Signal(str)
     _reach_checked = Signal(int, int, bool)   # gen, index, reachable
+    _places_loaded = Signal(int, object)      # gen, list[Place]
 
     def __init__(self, settings=None, parent=None) -> None:
         super().__init__(parent)
@@ -56,10 +97,12 @@ class PlacesSidebar(QWidget):
         self._settings = settings
         self._places: list = []     # app.places.Place のリスト
         self._reach_gen = 0
+        self._load_gen = 0          # 場所取得の世代（古い結果を破棄）
         # パス（normcase）→ ユーザー設定の表示名。
         self._custom_names: dict[str, str] = {}
         self._load_custom_names()
         self._reach_checked.connect(self._apply_reachability)
+        self._places_loaded.connect(self._on_places_loaded)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -76,10 +119,10 @@ class PlacesSidebar(QWidget):
         self.list.installEventFilter(self)
         layout.addWidget(self.list, stretch=1)
 
-        # 起動コスト最小化: データ取得・ウィジェット生成は同期実行（~10ms以下）。
-        # 到達性チェックのみ遅延（ネットワーク遅延が起動をブロックしないため）。
-        self._load()
-        QTimer.singleShot(500, self._check_reachability)
+        # 起動コスト最小化: 場所取得（同期 I/O 込み）はワーカースレッドで実行し、
+        # 完了時に _on_places_loaded でリストを構築する。到達性チェックは
+        # places 確定後にそこから 500ms 遅延で開始する。
+        self._start_load()
 
     def _load_custom_names(self) -> None:
         """現在の settings からカスタム表示名を読み込む。"""
@@ -90,15 +133,34 @@ class PlacesSidebar(QWidget):
                 self._custom_names = {str(k): str(v) for k, v in saved.items()}
 
     def set_settings(self, settings) -> None:
-        """place_names の永続化先を差し替えて表示を更新する（プロジェクト切替用）。"""
+        """place_names の永続化先を差し替えて表示を更新する（プロジェクト切替用）。
+
+        場所自体はシステム共通で変わらないため、取得済みなら再スキャンせず
+        カスタム表示名だけを反映してリストを作り直す（未取得なら取得を開始）。
+        """
         self._settings = settings
         self._load_custom_names()
-        self.refresh()
+        if self._places:
+            self._rebuild_list()
+        else:
+            self._start_load()
 
-    def _load(self) -> None:
-        """場所を取得してリストを構築する（同期・高速）。"""
-        from app.places import get_all_places
-        self._places = get_all_places()
+    def _start_load(self) -> None:
+        """場所取得をワーカースレッドで開始する（起動をブロックしない）。"""
+        self._load_gen += 1
+        QThreadPool.globalInstance().start(
+            _PlacesLoadJob(self._load_gen, self._places_loaded.emit))
+
+    def _on_places_loaded(self, gen: int, places: list) -> None:
+        """ワーカーが取得した場所一覧を反映し、到達性チェックを予約する。"""
+        if gen != self._load_gen:
+            return  # 古い取得結果は破棄
+        self._places = places
+        self._rebuild_list()
+        QTimer.singleShot(500, self._check_reachability)
+
+    def _rebuild_list(self) -> None:
+        """現在の self._places とカスタム表示名からリストを構築する（GUI スレッド）。"""
         self.list.clear()
         for i, place in enumerate(self._places):
             key = os.path.normcase(place.path)
@@ -213,7 +275,9 @@ class PlacesSidebar(QWidget):
             self._settings.set("place_names", dict(self._custom_names))
 
     def refresh(self) -> None:
-        """外部から再スキャンを要求する（USB抜き差し等）。"""
-        self._load()
-        self._reach_gen += 1
-        QTimer.singleShot(0, self._check_reachability)
+        """外部から再スキャンを要求する（USB抜き差し等）。
+
+        取得はワーカースレッドで行い、完了時に _on_places_loaded がリストを
+        作り直し到達性チェックを予約する。
+        """
+        self._start_load()
