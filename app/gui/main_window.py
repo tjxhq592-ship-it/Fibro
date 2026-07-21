@@ -673,10 +673,18 @@ class MainWindow(QMainWindow):
         return pane
 
     def _on_directory_loaded(self, pane: FilePane, path: str) -> None:
-        """QFileSystemModel が非同期に読み込んだ件数をステータスへ（巨大フォルダ確認）。"""
-        if pane is not self._active_pane:
-            return
+        """QFileSystemModel の非同期ロード完了時: 一括ソートしステータス更新。
+
+        ロード済みパスが現在の root と一致するペインだけ処理する。途中で
+        別パスへ navigate した場合、旧パスの directoryLoaded はここで無視され、
+        アクティブでないタブでも自身の root がロードし終われば一括ソートされる。
+        """
         if str(Path(path)) != pane.current_path:
+            return
+        # navigate/refresh の begin_population() で止めていた動的ソートを、
+        # ここで一括ソートしてから再開する（100件ごとの逐次ソートを回避）。
+        pane.finish_population()
+        if pane is not self._active_pane:
             return
         count = pane.list_model.rowCount(pane.list_model.index(path))
         self.statusBar().showMessage(_("items_n").format(n=count), 4000)
@@ -1251,10 +1259,15 @@ class MainWindow(QMainWindow):
     def current_path(self) -> str:
         return str(Path(self.list_model.rootPath()))
 
-    def navigate(self, path: str, record: bool = True) -> None:
+    def navigate(self, path: str, record: bool = True) -> bool:
+        """path へ移動する。成功で True、無効なパス（非ディレクトリ）で False。
+
+        戻り値は復元タブの妥当性判定（_on_tab_changed）で使う。既存の呼び出し
+        側は戻り値を無視しても従来どおり動作する。
+        """
         path = str(Path(path))
         if not Path(path).is_dir():
-            return
+            return False
         if record:
             self._history = self._history[: self._history_pos + 1]
             self._history.append(path)
@@ -1262,6 +1275,12 @@ class MainWindow(QMainWindow):
             self.recent_store.record(path)
             if hasattr(self, "recent_sidebar"):
                 self.recent_sidebar.refresh()
+        # population 中の逐次ソートを止める（directoryLoaded 後に一括ソート）。
+        # root が実際に変わる時だけ止める。同一 root への再 navigate では
+        # QFileSystemModel が directoryLoaded を再発火しないため、ここで止めると
+        # finish_population が呼ばれず動的ソートが無効のまま残ってしまう。
+        if path != self.current_path:
+            self._active_pane.begin_population()
         self.list_model.setRootPath(path)
         self.proxy.set_root_path(path)
         self.filter_edit.clear()
@@ -1280,6 +1299,7 @@ class MainWindow(QMainWindow):
         self._update_selection_status()
         self._update_disk_usage(path)
         self._update_tab_title(self._active_pane)
+        return True
 
     def _update_disk_usage(self, path: str) -> None:
         """カレントのドライブ空き容量を非同期で取得して表示する。
@@ -2067,6 +2087,8 @@ class MainWindow(QMainWindow):
     def refresh(self) -> None:
         """一覧を再読み込み（モデルのキャッシュを更新）。"""
         path = self.current_path
+        # navigate と同様、再ロード中の逐次ソートを止め、完了後に一括ソートする。
+        self._active_pane.begin_population()
         self.list_model.setRootPath("")
         self.list_model.setRootPath(path)
         self._active_pane.set_root_index(

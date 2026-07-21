@@ -63,7 +63,16 @@ class CurrentDirFilterProxy(QSortFilterProxyModel):
         self._needle = ""
 
     def set_root_path(self, path: str) -> None:
-        self._root_path = str(Path(path))
+        # QFileSystemModel.filePath() が返すスラッシュ区切りの正規形で保持し、
+        # filterAcceptsRow 内の model.filePath(parent) と文字列直接比較できる
+        # ようにする（行ごとの Path オブジェクト生成を排除）。
+        src = self.sourceModel()
+        if src is not None:
+            idx = src.index(path)
+            self._root_path = (src.filePath(idx) if idx.isValid()
+                               else path.replace("\\", "/"))
+        else:
+            self._root_path = path.replace("\\", "/")
         self.invalidateRowsFilter()
 
     def set_needle(self, text: str) -> None:
@@ -74,7 +83,9 @@ class CurrentDirFilterProxy(QSortFilterProxyModel):
         if not self._needle:
             return True
         model = self.sourceModel()
-        if str(Path(model.filePath(parent))) != self._root_path:
+        # filePath は set_root_path と同じスラッシュ区切りの正規形。行ごとの
+        # Path 生成を挟まず文字列直接比較で「カレント直下か」を判定する。
+        if model.filePath(parent) != self._root_path:
             return True  # カレント直下以外（祖先チェーン等）は素通し
         name = model.index(row, 0, parent).data() or ""
         return self._needle in str(name).lower()
@@ -109,17 +120,16 @@ class CurrentDirFilterProxy(QSortFilterProxyModel):
 
         既定の QSortFilterProxyModel は DisplayRole 文字列で並べるため、
         サイズ（"721 KiB" vs "2.79 GiB"）や更新日時（時刻がゼロ埋めされず
-        "8:02" と "10:15" が逆転）で時系列・大小がずれる。QFileSystemModel の
-        QFileInfo から実値を取り出して比較する。
+        "8:02" と "10:15" が逆転）で時系列・大小がずれる。比較のたびに
+        QFileInfo を2つ生成すると population 中のソートが重くなるため、
+        QFileSystemModel の直接 API（size/lastModified）で実値を取り出す。
         """
         model = self.sourceModel()
-        info_left = model.fileInfo(left)
-        info_right = model.fileInfo(right)
         col = left.column()
         if col == 1:  # サイズ
-            return info_left.size() < info_right.size()
+            return model.size(left) < model.size(right)
         if col == 3:  # 更新日時
-            return info_left.lastModified() < info_right.lastModified()
+            return model.lastModified(left) < model.lastModified(right)
         return super().lessThan(left, right)
 
 
@@ -240,6 +250,28 @@ class FilePane(QWidget):
         """詳細・サムネ両ビューのルートを同期する。"""
         self.table.setRootIndex(proxy_index)
         self.icon_view.setRootIndex(proxy_index)
+
+    def begin_population(self) -> None:
+        """population 開始前に動的ソート/フィルタを停止する。
+
+        QFileSystemModel は100件ごとに rowsInserted を発する。動的ソートが
+        有効なままだと挿入のたびに逐次ソートが走り、巨大フォルダで GUI
+        スレッドを長時間占有する。ここで止め、directoryLoaded 後に
+        finish_population() で一括ソートへ切り替える。
+        """
+        self.proxy.setDynamicSortFilter(False)
+
+    def finish_population(self) -> None:
+        """population 完了後に一括ソートし、動的ソート/フィルタを再開する。
+
+        ソート列・順序はヘッダのソートインジケータ（ユーザーのクリックで
+        変わる現在の並び）から取得する。再開後のファイル増減は動的に反映される。
+        """
+        header = self.table.horizontalHeader()
+        col = header.sortIndicatorSection()
+        order = header.sortIndicatorOrder()
+        self.proxy.sort(col, order)
+        self.proxy.setDynamicSortFilter(True)
 
     def set_view_mode(self, mode: str) -> None:
         self.view_mode = "thumbnails" if mode == "thumbnails" else "details"
