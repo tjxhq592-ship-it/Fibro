@@ -680,6 +680,8 @@ class MainWindow(QMainWindow):
         # navigate/refresh の begin_population() で止めていた動的ソートを、
         # ここで一括ソートしてから再開する（100件ごとの逐次ソートを回避）。
         pane.finish_population()
+        # 読み込みバーを消す（begin_loading と対でこのペインが対象）。
+        pane.end_loading()
         if pane is not self._active_pane:
             return
         count = pane.list_model.rowCount(pane.list_model.index(path))
@@ -1289,8 +1291,11 @@ class MainWindow(QMainWindow):
         # root が実際に変わる時だけ止める。同一 root への再 navigate では
         # QFileSystemModel が directoryLoaded を再発火しないため、ここで止めると
         # finish_population が呼ばれず動的ソートが無効のまま残ってしまう。
+        # 読み込みバー（150ms 遅延表示）も同一条件で開始する。さもないと同一 root
+        # への再 navigate でタイマーが走り、end_loading されずバーが残る。
         if path != self.current_path:
             self._active_pane.begin_population()
+            self._active_pane.begin_loading()
         self.list_model.setRootPath(path)
         self.proxy.set_root_path(path)
         self.filter_edit.clear()
@@ -2101,7 +2106,9 @@ class MainWindow(QMainWindow):
         """一覧を再読み込み（モデルのキャッシュを更新）。"""
         path = self.current_path
         # navigate と同様、再ロード中の逐次ソートを止め、完了後に一括ソートする。
+        # 読み込みバーも開始する（150ms を越えれば表示、越えなければ出ない）。
         self._active_pane.begin_population()
+        self._active_pane.begin_loading()
         self.list_model.setRootPath("")
         self.list_model.setRootPath(path)
         self._active_pane.set_root_index(

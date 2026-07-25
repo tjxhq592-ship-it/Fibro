@@ -9,12 +9,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import (
-    QDir, QEvent, QModelIndex, QSize, QSortFilterProxyModel, Qt, Signal,
+    QDir, QEvent, QModelIndex, QSize, QSortFilterProxyModel, Qt, QTimer, Signal,
 )
 from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import (
-    QAbstractItemView, QFileSystemModel, QMenu, QStackedLayout, QStyle,
-    QStyledItemDelegate, QTableView, QWidget,
+    QAbstractItemView, QFileSystemModel, QMenu, QProgressBar, QStackedLayout,
+    QStyle, QStyledItemDelegate, QTableView, QVBoxLayout, QWidget,
 )
 
 from app.gui.async_icons import shared_icon_provider
@@ -199,10 +199,35 @@ class FilePane(QWidget):
         # アクティブ枠表示用に 2px のマージンを確保（枠は paintEvent で描く）。
         # スタイルシートは使わない（テーマのパレットを壊さないため）。
         self._active_border = None  # None=枠なし / True=アクティブ / False=非アクティブ
-        self._stack = QStackedLayout(self)
+        self._stack = QStackedLayout()
         self._stack.setContentsMargins(2, 2, 2, 2)
         self._stack.addWidget(self.table)       # index 0 = details
         self._stack.addWidget(self.icon_view)   # index 1 = thumbnails
+
+        # ディレクトリ読み込みバー（一覧下端）。検索パネルと同じ 3px の
+        # インジターミネートバーで、objectName を共有して QSS スタイルを流用する。
+        # 読み込みが 150ms を越えたときだけ _loading_timer 経由で表示する。
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setObjectName("searchProgress")
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedHeight(3)
+        policy = self.progress_bar.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)  # 非表示でも高さ保持（レイアウト揺れ防止）
+        self.progress_bar.setSizePolicy(policy)
+        self.progress_bar.hide()
+
+        # スタック（table/icon_view）の下にバーを縦積みする。
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addLayout(self._stack, 1)
+        outer.addWidget(self.progress_bar)
+
+        # 150ms 遅延表示用の単発タイマー（超えたらバーを出す）。
+        self._loading_timer = QTimer(self)
+        self._loading_timer.setSingleShot(True)
+        self._loading_timer.setInterval(150)
+        self._loading_timer.timeout.connect(self.show_loading_bar)
 
         # 遅延アイコンが解決したら両ビューを再描画（viewport は QObject なので
         # ペイン破棄時に Qt が自動で接続解除する）。
@@ -272,6 +297,34 @@ class FilePane(QWidget):
         order = header.sortIndicatorOrder()
         self.proxy.sort(col, order)
         self.proxy.setDynamicSortFilter(True)
+
+    # ---- ディレクトリ読み込みバー（150ms 遅延表示） ----
+    def show_loading_bar(self) -> None:
+        """読み込みバーをインジターミネート表示にする（_loading_timer から呼ばれる）。"""
+        self.progress_bar.setRange(0, 0)  # インジターミネート開始
+        self.progress_bar.show()
+
+    def hide_loading_bar(self) -> None:
+        """読み込みバーを隠し、アニメーションを止める（検索バーと同じ手順）。"""
+        self.progress_bar.hide()
+        self.progress_bar.setRange(0, 1)
+        self.progress_bar.reset()
+
+    def begin_loading(self) -> None:
+        """読み込み開始。150ms 後にバーを出す単発タイマーを（再）起動する。
+
+        この時点ではまだバーは出さない。150ms 未満で end_loading が呼ばれれば
+        タイマーは発火前に止まり、バーは一度も出ない（高速フォルダのちらつき防止）。
+        begin_population と同じ条件（root が実際に変わるとき）で呼ぶこと。さもないと
+        同一 root への再 navigate でタイマーが走り、end_loading されずバーが残る。
+        """
+        self._loading_timer.stop()
+        self._loading_timer.start()
+
+    def end_loading(self) -> None:
+        """読み込み完了。タイマーを止めてバーを隠す（finish_population と同じ場所で呼ぶ）。"""
+        self._loading_timer.stop()
+        self.hide_loading_bar()
 
     def set_view_mode(self, mode: str) -> None:
         self.view_mode = "thumbnails" if mode == "thumbnails" else "details"

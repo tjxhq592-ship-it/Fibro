@@ -241,6 +241,38 @@ def measure_tabswitch(window, app) -> float:
     return statistics.median(switch_times)
 
 
+def measure_loading_bar(window, app, fast_dir, slow_dir, reset_dir) -> dict:
+    """読み込みバーの遅延表示正当性（D1）: 高速フォルダで出ず、低速で出るか。
+
+    progress_bar.isVisible() をサンプリングして自動検証する。
+    """
+    bar = window._active_pane.progress_bar
+
+    # 高速フォルダ（<150ms）: reset へ寄せてから fast へ。バーが一度も出ないこと。
+    window.navigate(str(reset_dir))
+    _spin_until(app, lambda: False, timeout_s=0.3)
+    fast_shown = False
+    window.navigate(str(fast_dir))
+    t0 = time.perf_counter()
+    while time.perf_counter() - t0 < 0.8:
+        app.processEvents()
+        if bar.isVisible():
+            fast_shown = True
+
+    # 低速フォルダ（>150ms）: reset へ寄せてから slow へ。バーが出ること。
+    window.navigate(str(reset_dir))
+    _spin_until(app, lambda: False, timeout_s=0.3)
+    slow_shown = False
+    window.navigate(str(slow_dir))
+    t0 = time.perf_counter()
+    while time.perf_counter() - t0 < 1.5 and not slow_shown:
+        app.processEvents()
+        if bar.isVisible():
+            slow_shown = True
+    _spin_until(app, lambda: not bar.isVisible(), timeout_s=6.0)  # settle
+    return {"fast_bar_shown": fast_shown, "slow_bar_shown": slow_shown}
+
+
 # ── オーケストレーション ─────────────────────────────────────────────────────
 
 def _median(vals):
@@ -300,6 +332,10 @@ def run_all(n_files: int, repeats: int) -> None:
             "tabswitch_ms_median": tab_ms,
         })
 
+    # D1: 読み込みバーの遅延表示正当性（fast=非表示 / slow=表示）
+    bar_ok = measure_loading_bar(window, app, small_dirs[0], data_dir,
+                                 small_dirs[1])
+
     # レポート
     def col(key):
         return _median([r[key] for r in starts])
@@ -315,12 +351,15 @@ def run_all(n_files: int, repeats: int) -> None:
     print(f"population_ms            : {_median([r['population_ms'] for r in runs]):8.1f}")
     print(f"jank_max_gap_ms          : {_median([r['jank_max_gap_ms'] for r in runs]):8.1f}")
     print(f"tabswitch_ms_median      : {_median([r['tabswitch_ms_median'] for r in runs]):8.1f}")
+    print(f"loading_bar(D1)          : fast_shown={bar_ok['fast_bar_shown']} "
+          f"slow_shown={bar_ok['slow_bar_shown']}  # 期待: fast=False, slow=True")
 
     # 生データ（各回）も JSON で残す
     print("\nRAW " + json.dumps({
         "importtime_ms": imp,
         "startup": starts,
         "runtime": runs,
+        "loading_bar": bar_ok,
     }))
     sys.stdout.flush()   # os._exit はバッファをフラッシュしないため明示する
     os._exit(0)  # closeEvent（保存）を避けて即終了
