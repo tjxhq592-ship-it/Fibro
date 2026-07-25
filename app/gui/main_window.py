@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import os
 import stat as stat_module
-import subprocess
 from pathlib import Path
 
 from PySide6.QtCore import (
@@ -33,10 +32,7 @@ from app.gui.file_pane import FilePane
 from app.gui.favorites_sidebar import FavoritesSidebar
 from app.gui.icons import material_icon
 from app.gui.places_sidebar import PlacesSidebar
-from app.gui.preview_dialog import QuickPreviewDialog
-from app.gui.properties_dialog import PropertiesDialog
 from app.gui.recent_sidebar import RecentSidebar
-from app.gui.rename_dialog import RenameDialog
 from app.gui.theme import THEME_META, THEME_ORDER, ThemeManager
 from app.models.favorite import FavoriteStore
 from app.models.project import ProjectManager
@@ -887,6 +883,9 @@ class MainWindow(QMainWindow):
         """Space: 選択中の先頭ファイルを軽量プレビュー。"""
         paths = self.selected_paths()
         if paths:
+            # preview_dialog は text_reader→charset_normalizer を引き込み
+            # import が重い（~50ms）。Space 押下時に初めて読み込む。
+            from app.gui.preview_dialog import QuickPreviewDialog
             QuickPreviewDialog(paths[0], self).exec()
 
     def toggle_view_mode(self) -> None:
@@ -1610,6 +1609,7 @@ class MainWindow(QMainWindow):
 
     def _open_terminal(self, directory: str) -> None:
         """Windows Terminal があれば優先、なければ cmd で開く。"""
+        import subprocess
         try:
             subprocess.Popen(["wt.exe", "-d", directory])  # noqa: S603,S607
         except OSError:
@@ -1620,6 +1620,7 @@ class MainWindow(QMainWindow):
                                     _("dlg_terminal_fail_msg").format(err=e))
 
     def _open_in(self, cmd: list[str], directory: str, shell: bool = False) -> None:
+        import subprocess
         try:
             if cmd[-1] == "code":  # VS Code は対象パスを引数で渡す
                 subprocess.Popen([*cmd, directory], shell=shell)  # noqa: S603
@@ -1896,6 +1897,7 @@ class MainWindow(QMainWindow):
     def show_properties(self) -> None:
         paths = self.selected_paths()
         if paths:
+            from app.gui.properties_dialog import PropertiesDialog
             PropertiesDialog(paths[0], self).exec()
 
     # ---- 通知（トースト） ----
@@ -2334,6 +2336,7 @@ class MainWindow(QMainWindow):
             existing = {e.name for e in os.scandir(directory)}
         except OSError:
             existing = set(selected)
+        from app.gui.rename_dialog import RenameDialog
         dialog = RenameDialog(directory, selected, existing,
                               self.rename_executor, self,
                               preset_store=self.preset_store)
