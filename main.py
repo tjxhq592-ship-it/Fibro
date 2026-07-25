@@ -63,8 +63,21 @@ def main() -> int:
     from app.gui.motion import init_reduced_motion
     init_reduced_motion()
 
-    from app.gui.theme import app_font
-    app.setFont(app_font())
+    # テーマ（プロジェクト範囲）を MainWindow 構築の「前」に適用する。
+    # 構築後に apply() すると、構築時の既定スタイルでのポリッシュに加えて
+    # Fusion+パレット+QSS で全ウィジェットツリーの再ポリッシュが走る（実質2回）。
+    # 構築前に適用しておけば、全ウィジェットは最初から目的のテーマでポリッシュ
+    # され1回で済む。テーマ値は現在プロジェクトの設定 JSON から軽量に読む
+    # （GUI 不要・JSON 読みのみ）。apply() 内でフォントも設定される。
+    from app.gui.theme import ThemeManager
+    from app.models.project import ProjectManager
+    from app.models.project_settings import ProjectSettingsStore
+    theme_manager = ThemeManager(CONFIG_DIR / "settings.json")  # 言語もここで適用
+    project_manager = ProjectManager(CONFIG_DIR)
+    settings_path = project_manager.store_paths(
+        project_manager.active_project_id)["project_settings"]
+    saved_theme = ProjectSettingsStore(settings_path).get("theme", "light")
+    theme_manager.apply(app, saved_theme)
 
     window = MainWindow()
     server = single_instance.InstanceServer()
@@ -72,9 +85,6 @@ def main() -> int:
     server.start()
     window._instance_server = server  # GC 防止に保持
 
-    # 保存済みテーマ（プロジェクト範囲）を起動時に適用
-    window.theme_manager.apply(
-        app, window.project_settings.get("theme", "light"))
     window.show()
 
     # フォルダ引数付き起動（ダブルクリックでの「開く」差し替え等）は
