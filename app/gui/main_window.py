@@ -740,19 +740,24 @@ class MainWindow(QMainWindow):
         return pane
 
     def _on_directory_loaded(self, pane: FilePane, path: str) -> None:
-        """QFileSystemModel の非同期ロード完了時: 一括ソートしステータス更新。
+        """QFileSystemModel の非同期ロード完了時: バーを消し、一致 root なら一括ソート。
 
-        ロード済みパスが現在の root と一致するペインだけ処理する。途中で
-        別パスへ navigate した場合、旧パスの directoryLoaded はここで無視され、
-        アクティブでないタブでも自身の root がロードし終われば一括ソートされる。
+        読み込みバーは begin_loading と対で「必ず」消す（B2）。current と一致しない
+        古いロード完了でも消す。さもないと別ドライブ A→B の素早い切替や、キャッシュ
+        済み root への再 navigate で directoryLoaded が再発火せず、begin_loading で
+        出したバーが end_loading されないまま残りうる（実測で残存を確認）。
+        一括ソート（finish_population）とステータス表示は「今表示中の root」の完了
+        時だけ行う。別 root（古いロード／中断された遷移）の完了でここを走らせると、
+        進行中の current root の population 中に動的ソートが復活し P1 の逐次ソート
+        回避を損なう。ゆえに finish_population は一致時のみ（不一致はバー消しだけ）。
         """
+        # 読み込みバーは無条件で消す（残存バー防止・B2 の主眼）。
+        pane.end_loading()
         if str(Path(path)) != pane.current_path:
             return
         # navigate/refresh の begin_population() で止めていた動的ソートを、
         # ここで一括ソートしてから再開する（100件ごとの逐次ソートを回避）。
         pane.finish_population()
-        # 読み込みバーを消す（begin_loading と対でこのペインが対象）。
-        pane.end_loading()
         if pane is not self._active_pane:
             return
         count = pane.list_model.rowCount(pane.list_model.index(path))

@@ -708,3 +708,45 @@ class TestNetworkPathDetection:
                 _is_network_path(p)
         elapsed = time.perf_counter() - t0
         assert elapsed < 0.5  # 実 I/O があれば秒単位に膨れる
+
+
+# ---- Phase 2.1 バグ修正（B2: 読み込みバー残存） ----
+class TestLoadingBarResidue:
+    def test_mismatch_completion_clears_bar_and_keeps_p1(
+            self, qapp, tmp_path, monkeypatch):
+        """current と不一致の古いロード完了でもバーは必ず消す（B2）。
+
+        かつ不一致では finish_population を呼ばず、進行中 population の動的ソートを
+        復活させない（P1 の逐次ソート回避を維持）。
+        """
+        a, b = tmp_path / "m_a", tmp_path / "m_b"
+        a.mkdir()
+        b.mkdir()
+        win = _make_window(tmp_path, monkeypatch)
+        win.navigate(str(a))
+        pane = win._active_pane
+        # population 中（動的ソート停止）＆バー表示中の状態を作る
+        pane.begin_population()
+        assert pane.proxy.dynamicSortFilter() is False
+        pane.show_loading_bar()
+        pane._loading_timer.start()
+        # 別ドライブ相当の古いパスの完了通知（b != current a）
+        win._on_directory_loaded(pane, str(b))
+        assert pane._loading_timer.isActive() is False   # バーのタイマー停止
+        assert pane.progress_bar.maximum() == 1           # hide 済み（非インジターミネート）
+        assert pane.proxy.dynamicSortFilter() is False    # finish 未実行→P1 維持
+
+    def test_match_completion_finishes_population(
+            self, qapp, tmp_path, monkeypatch):
+        """一致 root の完了では一括ソートして動的ソートを再開する。"""
+        a = tmp_path / "m_c"
+        a.mkdir()
+        win = _make_window(tmp_path, monkeypatch)
+        win.navigate(str(a))
+        pane = win._active_pane
+        pane.begin_population()
+        pane.show_loading_bar()
+        pane._loading_timer.start()
+        win._on_directory_loaded(pane, pane.current_path)
+        assert pane._loading_timer.isActive() is False   # バー消し
+        assert pane.proxy.dynamicSortFilter() is True     # 一括ソート後に再開
