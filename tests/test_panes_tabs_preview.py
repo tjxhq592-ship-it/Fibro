@@ -675,3 +675,36 @@ class TestQuickPreview:
         p.write_text("content", encoding="utf-8")
         dlg = QuickPreviewDialog(str(p))
         assert dlg.windowTitle().endswith("x.txt")
+
+
+# ---- Phase 2.1 バグ修正（B1: ネットワークパス判定） ----
+class TestNetworkPathDetection:
+    def test_unc_paths_are_network(self):
+        from app.gui.main_window import _is_network_path
+        assert _is_network_path("\\\\server\\share") is True
+        assert _is_network_path("//server/share") is True
+
+    def test_local_and_relative_are_not_network(self, tmp_path):
+        """固定ドライブ・相対・空パスはネットワーク扱いにしない（同期 is_dir へ）。"""
+        from app.gui.main_window import _is_network_path
+        assert _is_network_path(str(tmp_path)) is False   # 固定ドライブ配下
+        assert _is_network_path("subdir/file") is False
+        assert _is_network_path("") is False
+
+    def test_unassigned_drive_letter_not_network(self):
+        """未割り当てドライブレターは DRIVE_REMOTE でない → ネットワーク扱いしない。"""
+        from app.gui.main_window import _is_network_path
+        # Q: は通常未割り当て（DRIVE_NO_ROOT_DIR=1）。非 Windows でも UNC でない→False。
+        assert _is_network_path("Q:\\foo") is False
+
+    def test_detection_is_non_blocking(self):
+        """判定はブロックしない（1000 回でも数 ms）。ネットワーク I/O を伴わない。"""
+        import time
+        from app.gui.main_window import _is_network_path
+        paths = ["\\\\srv\\s", "C:\\Windows", "Q:\\x", "rel/p", ""]
+        t0 = time.perf_counter()
+        for _ in range(1000):
+            for p in paths:
+                _is_network_path(p)
+        elapsed = time.perf_counter() - t0
+        assert elapsed < 0.5  # 実 I/O があれば秒単位に膨れる

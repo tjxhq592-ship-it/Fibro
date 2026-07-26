@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import os
 import stat as stat_module
+import sys
+from functools import lru_cache
 from pathlib import Path
 
 from PySide6.QtCore import (
@@ -92,14 +94,47 @@ def _human_size(size: float) -> str:
     return f"{size:,.1f} TB"
 
 
-def _is_unc_path(path: str) -> bool:
-    """UNC（\\\\server\\share）ネットワークパスかどうかを文字列だけで判定する。
+_DRIVE_REMOTE = 4  # Win32 DRIVE_REMOTE（ネットワークに割り当てられたドライブ）
+
+
+@lru_cache(maxsize=64)
+def _drive_type(root: str) -> int:
+    """ドライブルート（例 "Z:\\\\"）の種別を返す。Windows 以外は 0。
+
+    GetDriveTypeW はドライブレターの割り当て種別を返すだけで、実際の
+    ネットワーク接続は行わない（切断中のリモートドライブでもブロックせず
+    DRIVE_REMOTE を返す）。種別は実行中ほぼ固定なので lru_cache で保持する。
+    実行中にドライブの割り当て/解除が起きうる場面（places 再読込など）では
+    呼び出し側で _drive_type.cache_clear() を呼べば安全（必須ではない）。
+    """
+    if sys.platform != "win32":
+        return 0
+    try:
+        import ctypes
+        return int(ctypes.windll.kernel32.GetDriveTypeW(root))
+    except Exception:
+        return 0
+
+
+def _is_network_path(path: str) -> bool:
+    """ネットワークパス（UNC またはリモート割り当てドライブ）かを判定する。
 
     切断中のネットワークパスへ is_dir/exists を打つと SMB タイムアウトで
-    数秒ブロックしうる。文字列判定はブロックしないので、ブロックしうる I/O を
-    避けるかどうかの分岐に使う。Path で正規化済みなら UNC は先頭 2 バックスラッシュ。
+    数秒ブロックしうる。この判定はブロックしない（文字列判定＋非ブロッキングな
+    GetDriveTypeW のみ）ので、ブロックしうる同期 I/O を避ける分岐に使う。
+    - UNC（\\\\server\\share）: 先頭 2 バックスラッシュ／スラッシュで判定
+      （Path で正規化済みなら UNC は先頭 2 バックスラッシュ）。
+    - リモート割り当てドライブ（例 "Z:\\folder"）: ドライブルートの
+      GetDriveType == DRIVE_REMOTE で判定（非 Windows は UNC 判定のみ）。
     """
-    return path.startswith("\\\\") or path.startswith("//")
+    if path.startswith("\\\\") or path.startswith("//"):
+        return True
+    # ドライブレター割り当て（例 "Z:\\folder"）のリモート判定。UNC は上で
+    # True を返すのでここには到達しない（splitdrive に UNC を渡さない）。
+    drive, _rest = os.path.splitdrive(path)
+    if drive and drive.endswith(":"):
+        return _drive_type(drive + "\\") == _DRIVE_REMOTE
+    return False
 
 
 class SingleRenameDialog(QDialog):
@@ -311,11 +346,12 @@ class _DiskUsageJob(QRunnable):
 
 
 class _PathValidateJob(QRunnable):
-    """保存タブの UNC パスの実在確認をバックグラウンドで行う。
+    """保存タブのネットワークパスの実在確認をバックグラウンドで行う。
 
-    UNC への is_dir は切断時に数秒ブロックしうるため、GUI スレッドではなく
-    ここで確認し、結果を emit(pane, path, is_valid) で返す。復元タブの
-    フォールバック判定（_on_tab_changed）を非同期化するために使う。
+    ネットワークパス（UNC・リモート割り当てドライブ）への is_dir は切断時に
+    数秒ブロックしうるため、GUI スレッドではなくここで確認し、結果を
+    emit(pane, path, is_valid) で返す。復元タブのフォールバック判定
+    （_on_tab_changed）を非同期化するために使う。
     """
 
     def __init__(self, path: str, pane, emit) -> None:
@@ -339,7 +375,7 @@ class MainWindow(QMainWindow):
     _open_failed = Signal(str, str)
     # 空き容量の非同期取得結果（gen, (free, total) | None）
     _disk_usage_ready = Signal(int, object)
-    # 復元タブの UNC パス実在確認の結果（pane, path, is_valid）
+    # 復元タブのネットワークパス実在確認の結果（pane, path, is_valid）
     _tab_path_validated = Signal(object, str, bool)
 
     def __init__(self) -> None:
@@ -826,7 +862,7 @@ class MainWindow(QMainWindow):
             # フォールバックする（_on_tab_path_validated）。ローカルは従来どおり
             # 同期検証し、失敗（削除済み等）なら既定ディレクトリへフォールバックして
             # タブタイトルを更新する（空ペインのまま残さない）。
-            if _is_unc_path(path):
+            if _is_network_path(path):
                 QThreadPool.globalInstance().start(
                     _PathValidateJob(path, pane, self._tab_path_validated.emit))
             elif not self.navigate(path):
@@ -1318,12 +1354,13 @@ class MainWindow(QMainWindow):
         側は戻り値を無視しても従来どおり動作する。
         """
         path = str(Path(path))
-        # D2-1(方針B): is_dir の事前チェックはローカルパスのみ同期で行う。UNC は
-        # 切断時に is_dir が数秒ブロックしうるため、事前チェックを省いて
+        # D2-1(方針B)/B1: is_dir の事前チェックはローカルパスのみ同期で行う。
+        # ネットワークパス（UNC もリモート割り当てドライブ Z: 等も）は切断時に
+        # is_dir が数秒ブロックしうるため、事前チェックを省いて
         # QFileSystemModel.setRootPath に委ねる（無効でも即座に返り空表示になる）。
-        # ローカル無効パスは従来どおり False を返しフォールバックできる。UNC は
-        # 楽観的に True を返す（復元タブの UNC 検証は _on_tab_changed でワーカー化）。
-        if not _is_unc_path(path) and not Path(path).is_dir():
+        # ローカル無効パスは従来どおり False を返しフォールバックできる。ネットワークは
+        # 楽観的に True を返す（復元タブの実在検証は _on_tab_changed でワーカー化）。
+        if not _is_network_path(path) and not Path(path).is_dir():
             return False
         if record:
             self._history = self._history[: self._history_pos + 1]
