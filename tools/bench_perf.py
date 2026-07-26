@@ -273,6 +273,21 @@ def measure_loading_bar(window, app, fast_dir, slow_dir, reset_dir) -> dict:
     return {"fast_bar_shown": fast_shown, "slow_bar_shown": slow_shown}
 
 
+def measure_navigate_sync(window, app, target_dir, reset_dir) -> float:
+    """navigate() の同期区間の wall time（D2）。
+
+    is_dir・setRootPath・ツリー操作を含む navigate 呼び出しそのものの所要時間。
+    D2 で is_dir(UNC のみ)とツリー展開を非同期化したため、この同期区間は
+    短くなる（ローカルパスでは元々小さいが、深いパス/低速ドライブで効く）。
+    ネットワークドライブ（切断）での効果は実機でのみ観測できる。
+    """
+    window.navigate(str(reset_dir))
+    _spin_until(app, lambda: False, timeout_s=0.3)
+    t0 = time.perf_counter()
+    window.navigate(str(target_dir))   # 同期区間のみ計測（ロード完了は待たない）
+    return (time.perf_counter() - t0) * 1000
+
+
 # ── オーケストレーション ─────────────────────────────────────────────────────
 
 def _median(vals):
@@ -336,6 +351,11 @@ def run_all(n_files: int, repeats: int) -> None:
     bar_ok = measure_loading_bar(window, app, small_dirs[0], data_dir,
                                  small_dirs[1])
 
+    # D2: navigate() 同期区間の wall time（ローカル大フォルダ）
+    nav_sync = [measure_navigate_sync(window, app, data_dir,
+                                      small_dirs[i % len(small_dirs)])
+                for i in range(repeats)]
+
     # レポート
     def col(key):
         return _median([r[key] for r in starts])
@@ -353,6 +373,8 @@ def run_all(n_files: int, repeats: int) -> None:
     print(f"tabswitch_ms_median      : {_median([r['tabswitch_ms_median'] for r in runs]):8.1f}")
     print(f"loading_bar(D1)          : fast_shown={bar_ok['fast_bar_shown']} "
           f"slow_shown={bar_ok['slow_bar_shown']}  # 期待: fast=False, slow=True")
+    print(f"navigate_sync_ms(D2)     : {_median(nav_sync):8.1f}"
+          "   # navigate 同期区間（ローカル大フォルダ）")
 
     # 生データ（各回）も JSON で残す
     print("\nRAW " + json.dumps({
@@ -360,6 +382,7 @@ def run_all(n_files: int, repeats: int) -> None:
         "startup": starts,
         "runtime": runs,
         "loading_bar": bar_ok,
+        "navigate_sync_ms": nav_sync,
     }))
     sys.stdout.flush()   # os._exit はバッファをフラッシュしないため明示する
     os._exit(0)  # closeEvent（保存）を避けて即終了

@@ -92,6 +92,16 @@ def _human_size(size: float) -> str:
     return f"{size:,.1f} TB"
 
 
+def _is_unc_path(path: str) -> bool:
+    """UNC（\\\\server\\share）ネットワークパスかどうかを文字列だけで判定する。
+
+    切断中のネットワークパスへ is_dir/exists を打つと SMB タイムアウトで
+    数秒ブロックしうる。文字列判定はブロックしないので、ブロックしうる I/O を
+    避けるかどうかの分岐に使う。Path で正規化済みなら UNC は先頭 2 バックスラッシュ。
+    """
+    return path.startswith("\\\\") or path.startswith("//")
+
+
 class SingleRenameDialog(QDialog):
     """名前と拡張子を別フィールドで編集するリネームダイアログ。
 
@@ -300,6 +310,28 @@ class _DiskUsageJob(QRunnable):
         self._emit(self._gen, safe_disk_usage(self._path))
 
 
+class _PathValidateJob(QRunnable):
+    """保存タブの UNC パスの実在確認をバックグラウンドで行う。
+
+    UNC への is_dir は切断時に数秒ブロックしうるため、GUI スレッドではなく
+    ここで確認し、結果を emit(pane, path, is_valid) で返す。復元タブの
+    フォールバック判定（_on_tab_changed）を非同期化するために使う。
+    """
+
+    def __init__(self, path: str, pane, emit) -> None:
+        super().__init__()
+        self._path = path
+        self._pane = pane
+        self._emit = emit
+
+    def run(self) -> None:
+        try:
+            ok = Path(self._path).is_dir()
+        except OSError:
+            ok = False
+        self._emit(self._pane, self._path, ok)
+
+
 class MainWindow(QMainWindow):
     # 選択サイズ合計の非同期計算結果（gen, 合計バイト）
     _size_computed = Signal(int, int)
@@ -307,6 +339,8 @@ class MainWindow(QMainWindow):
     _open_failed = Signal(str, str)
     # 空き容量の非同期取得結果（gen, (free, total) | None）
     _disk_usage_ready = Signal(int, object)
+    # 復元タブの UNC パス実在確認の結果（pane, path, is_valid）
+    _tab_path_validated = Signal(object, str, bool)
 
     def __init__(self) -> None:
         super().__init__()
@@ -319,6 +353,7 @@ class MainWindow(QMainWindow):
         self._disk_gen = 0           # 空き容量表示の世代（古い結果を破棄）
         self._disk_path = ""         # 直近に空き容量を要求したパス
         self._disk_usage_ready.connect(self._apply_disk_usage)
+        self._tab_path_validated.connect(self._on_tab_path_validated)
 
         self.rename_executor = RenameExecutor()
         self.file_ops = FileOps()
@@ -786,10 +821,15 @@ class MainWindow(QMainWindow):
             pane = self._tabs[index]
             self.primary_stack.setCurrentWidget(pane)
             self._set_active_pane(pane)
-            # 保存タブの妥当性はここで初めて検証する。navigate が失敗（削除済み・
-            # 到達不可でディレクトリでない）したら既定ディレクトリへフォールバック
-            # し、タブタイトルも更新する（空ペインのまま残さない）。
-            if not self.navigate(path):
+            # 保存タブの妥当性はここで初めて検証する。UNC は is_dir が切断時に
+            # ブロックしうるためワーカーで検証し、結果に応じて navigate/
+            # フォールバックする（_on_tab_path_validated）。ローカルは従来どおり
+            # 同期検証し、失敗（削除済み等）なら既定ディレクトリへフォールバックして
+            # タブタイトルを更新する（空ペインのまま残さない）。
+            if _is_unc_path(path):
+                QThreadPool.globalInstance().start(
+                    _PathValidateJob(path, pane, self._tab_path_validated.emit))
+            elif not self.navigate(path):
                 fallback = self._default_dir()
                 self.tab_bar.setTabText(index, self._tab_title(fallback))
                 self.tab_bar.setTabToolTip(index, fallback)
@@ -1278,7 +1318,12 @@ class MainWindow(QMainWindow):
         側は戻り値を無視しても従来どおり動作する。
         """
         path = str(Path(path))
-        if not Path(path).is_dir():
+        # D2-1(方針B): is_dir の事前チェックはローカルパスのみ同期で行う。UNC は
+        # 切断時に is_dir が数秒ブロックしうるため、事前チェックを省いて
+        # QFileSystemModel.setRootPath に委ねる（無効でも即座に返り空表示になる）。
+        # ローカル無効パスは従来どおり False を返しフォールバックできる。UNC は
+        # 楽観的に True を返す（復元タブの UNC 検証は _on_tab_changed でワーカー化）。
+        if not _is_unc_path(path) and not Path(path).is_dir():
             return False
         if record:
             self._history = self._history[: self._history_pos + 1]
@@ -1304,9 +1349,10 @@ class MainWindow(QMainWindow):
         self.breadcrumb.set_path(path)
         if self.search_panel is not None:
             self.search_panel.set_root(path)
-        tree_index = self.tree_model.index(path)
-        self.tree.setCurrentIndex(tree_index)
-        self.tree.expand(tree_index)
+        # D2-2: ツリーの選択・展開は祖先チェーンの fetch でシェル問い合わせが
+        # ブロックしうるため、navigate の同期区間から外してイベントループ次
+        # サイクルへ逃がす（見た目更新は1フレーム遅れるが体感問題なし）。
+        QTimer.singleShot(0, lambda p=path: self._sync_tree_to_path(p))
         sel_model = self.table.selectionModel()
         if sel_model:
             sel_model.selectionChanged.connect(
@@ -1315,6 +1361,39 @@ class MainWindow(QMainWindow):
         self._update_disk_usage(path)
         self._update_tab_title(self._active_pane)
         return True
+
+    def _sync_tree_to_path(self, path: str) -> None:
+        """ツリーの選択・展開を path に同期する（navigate から遅延実行される）。
+
+        ツリーが不可視（セクション折りたたみ／未表示）なら何もしない。既に別パスへ
+        移動済み（path が現在のカレントでない）なら古い同期をスキップする。
+        """
+        if not self.tree.isVisible() or path != self.current_path:
+            return
+        idx = self.tree_model.index(path)
+        self.tree.setCurrentIndex(idx)
+        self.tree.expand(idx)
+
+    def _on_tab_path_validated(self, pane, path: str, valid: bool) -> None:
+        """復元タブの UNC パス検証結果を反映する（ワーカーからの非同期通知）。
+
+        検証中にタブが閉じられていたら無視。無効なら既定ディレクトリへ
+        フォールバックしてタブタイトルを更新する。対象ペインがアクティブなら即
+        navigate、非アクティブなら pending へ積んで次回選択時にロードする。
+        """
+        if pane not in self._tabs:
+            return  # 検証中に閉じられた
+        idx = self._tabs.index(pane)
+        if valid:
+            target = path
+        else:
+            target = self._default_dir()
+            self.tab_bar.setTabText(idx, self._tab_title(target))
+            self.tab_bar.setTabToolTip(idx, target)
+        if pane is self._active_pane:
+            self.navigate(target)
+        else:
+            self._pending_paths[idx] = target
 
     def _update_disk_usage(self, path: str) -> None:
         """カレントのドライブ空き容量を非同期で取得して表示する。
