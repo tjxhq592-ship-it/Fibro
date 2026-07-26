@@ -823,3 +823,24 @@ class TestNetworkTabValidationOnce:
         win.close_tab(1)
         assert 1 in win._pending_paths
         assert win._pending_paths[1] == (str(c), True)
+
+
+# ---- Phase 2.1 バグ修正（B4: tree 同期 singleShot 集約） ----
+class TestTreeSyncCoalesce:
+    def test_consecutive_navigate_coalesces_tree_sync(
+            self, qapp, tmp_path, monkeypatch):
+        """連続 navigate では tree 同期の保留は最新1本に集約される。"""
+        a, b, c = tmp_path / "ta", tmp_path / "tb", tmp_path / "tc"
+        for d in (a, b, c):
+            d.mkdir()
+        win = _make_window(tmp_path, monkeypatch)
+        win.navigate(str(a))
+        win.navigate(str(b))
+        win.navigate(str(c))
+        # 保留は最新パスのみ、スケジュールは1本だけ立っている
+        assert win._pending_tree_path == str(c)
+        assert win._tree_sync_scheduled is True
+        for _ in range(5):
+            qapp.processEvents()
+        # ハンドラ実行後はフラグが下りる（再スケジュールされていない）
+        assert win._tree_sync_scheduled is False

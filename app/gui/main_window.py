@@ -416,6 +416,10 @@ class MainWindow(QMainWindow):
         self._pending_paths: dict[int, tuple[str, bool]] = {}
         self._active_pane: FilePane | None = None
         self._dual = False
+        # ツリー同期の遅延実行（B4）。連続 navigate で singleShot が複数積まれるのを
+        # 防ぎ、保留は最新パス1つに集約する。ハンドラは最新値を読んで同期する。
+        self._pending_tree_path = ""
+        self._tree_sync_scheduled = False
 
         # ツリーは共有（左サイドバー）
         self.tree_model = QFileSystemModel(self)
@@ -1399,7 +1403,12 @@ class MainWindow(QMainWindow):
         # D2-2: ツリーの選択・展開は祖先チェーンの fetch でシェル問い合わせが
         # ブロックしうるため、navigate の同期区間から外してイベントループ次
         # サイクルへ逃がす（見た目更新は1フレーム遅れるが体感問題なし）。
-        QTimer.singleShot(0, lambda p=path: self._sync_tree_to_path(p))
+        # B4: 連続 navigate で singleShot が複数積まれないよう、保留パスを最新へ
+        # 更新し、未スケジュール時のみ1本だけ張る。ハンドラは最新値で同期する。
+        self._pending_tree_path = path
+        if not self._tree_sync_scheduled:
+            self._tree_sync_scheduled = True
+            QTimer.singleShot(0, self._sync_tree_to_path)
         sel_model = self.table.selectionModel()
         if sel_model:
             sel_model.selectionChanged.connect(
@@ -1409,12 +1418,16 @@ class MainWindow(QMainWindow):
         self._update_tab_title(self._active_pane)
         return True
 
-    def _sync_tree_to_path(self, path: str) -> None:
-        """ツリーの選択・展開を path に同期する（navigate から遅延実行される）。
+    def _sync_tree_to_path(self) -> None:
+        """ツリーの選択・展開を最新の保留パスに同期する（navigate から遅延実行）。
 
-        ツリーが不可視（セクション折りたたみ／未表示）なら何もしない。既に別パスへ
-        移動済み（path が現在のカレントでない）なら古い同期をスキップする。
+        B4: 連続 navigate で積まれる singleShot を1本に集約したハンドラ。保留は
+        _pending_tree_path に最新値だけ残る。ツリーが不可視（セクション折りたたみ／
+        未表示）なら何もしない。既に別パスへ移動済み（保留が現在のカレントでない）
+        なら古い同期をスキップする。
         """
+        self._tree_sync_scheduled = False
+        path = self._pending_tree_path
         if not self.tree.isVisible() or path != self.current_path:
             return
         idx = self.tree_model.index(path)
