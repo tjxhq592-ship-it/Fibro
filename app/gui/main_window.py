@@ -410,7 +410,10 @@ class MainWindow(QMainWindow):
 
         # --- ペイン（タブ＝主ペイン群 + デュアル用サブペイン） ---
         self._tabs: list[FilePane] = []        # タブ順に並ぶ主ペイン
-        self._pending_paths: dict[int, str] = {}  # index→未ロードパス（遅延ロード）
+        # index →（未ロードパス, 検証済みか）。遅延ロード用。検証済みフラグは
+        # ネットワークタブの実在検証を1タブ最大1回に抑えるため（B3）。検証後に
+        # pending へ戻す値は常に navigate 可能な確定パス（有効パス or フォールバック）。
+        self._pending_paths: dict[int, tuple[str, bool]] = {}
         self._active_pane: FilePane | None = None
         self._dual = False
 
@@ -858,16 +861,18 @@ class MainWindow(QMainWindow):
             return
         # 未ロードのタブを初めて選択したとき、ここで遅延ロードを実行する
         if index in self._pending_paths:
-            path = self._pending_paths.pop(index)
+            path, validated = self._pending_paths.pop(index)
             pane = self._tabs[index]
             self.primary_stack.setCurrentWidget(pane)
             self._set_active_pane(pane)
-            # 保存タブの妥当性はここで初めて検証する。UNC は is_dir が切断時に
-            # ブロックしうるためワーカーで検証し、結果に応じて navigate/
+            # 保存タブの妥当性はここで初めて検証する。ネットワークパスは is_dir が
+            # 切断時にブロックしうるためワーカーで検証し、結果に応じて navigate/
             # フォールバックする（_on_tab_path_validated）。ローカルは従来どおり
             # 同期検証し、失敗（削除済み等）なら既定ディレクトリへフォールバックして
             # タブタイトルを更新する（空ペインのまま残さない）。
-            if _is_network_path(path):
+            # 検証済み（再選択で pending に戻された確定/フォールバック値）は
+            # ネットワークでも再検証せず直接 navigate する（B3: 検証は最大1回）。
+            if not validated and _is_network_path(path):
                 QThreadPool.globalInstance().start(
                     _PathValidateJob(path, pane, self._tab_path_validated.emit))
             elif not self.navigate(path):
@@ -1006,7 +1011,7 @@ class MainWindow(QMainWindow):
             idx = self.tab_bar.addTab(self._tab_title(p))
             self._install_tab_close_button(idx)
             self.tab_bar.setTabToolTip(idx, p)
-            self._pending_paths[idx] = p
+            self._pending_paths[idx] = (p, False)  # 未検証（初回選択時に検証）
 
         # 復元した先頭タブを選択してロード。起動直後は先頭 addTab の時点で
         # index 0 が current 化済み（signal が再発火しない）ため直接呼ぶ。
@@ -1417,7 +1422,7 @@ class MainWindow(QMainWindow):
         self.tree.expand(idx)
 
     def _on_tab_path_validated(self, pane, path: str, valid: bool) -> None:
-        """復元タブの UNC パス検証結果を反映する（ワーカーからの非同期通知）。
+        """復元タブのネットワークパス検証結果を反映する（ワーカーからの非同期通知）。
 
         検証中にタブが閉じられていたら無視。無効なら既定ディレクトリへ
         フォールバックしてタブタイトルを更新する。対象ペインがアクティブなら即
@@ -1435,7 +1440,9 @@ class MainWindow(QMainWindow):
         if pane is self._active_pane:
             self.navigate(target)
         else:
-            self._pending_paths[idx] = target
+            # 検証済みの確定パスとして pending に戻す。次回選択時は再検証せず
+            # 直接 navigate される（B3: ネットワーク検証は1タブ最大1回）。
+            self._pending_paths[idx] = (target, True)
 
     def _update_disk_usage(self, path: str) -> None:
         """カレントのドライブ空き容量を非同期で取得して表示する。

@@ -750,3 +750,76 @@ class TestLoadingBarResidue:
         win._on_directory_loaded(pane, pane.current_path)
         assert pane._loading_timer.isActive() is False   # バー消し
         assert pane.proxy.dynamicSortFilter() is True     # 一括ソート後に再開
+
+
+# ---- Phase 2.1 バグ修正（B3: ネットワークタブ検証は最大1回） ----
+class TestNetworkTabValidationOnce:
+    def test_validation_runs_at_most_once(self, qapp, tmp_path, monkeypatch):
+        """ネットワーク保存タブを選択→検証中に別タブ→戻る、を繰り返しても検証は1回。
+
+        検証済みの確定/フォールバック値は pending へ (path, True) で戻り、
+        再選択時は再検証せず直接 navigate される。
+        """
+        from PySide6.QtCore import QRunnable
+        import app.gui.main_window as mw
+
+        a, b = tmp_path / "na", tmp_path / "nb"
+        a.mkdir()
+        b.mkdir()
+        win = _make_window(tmp_path, monkeypatch)
+        win.navigate(str(a))     # tab0 = A（アクティブ）
+        win.new_tab(str(b))      # tab1 = B（アクティブ）
+
+        # _PathValidateJob を非同期スタブ化：構築＝検証開始を記録、run は何もしない
+        starts: list[str] = []
+        holder: dict = {}
+
+        class FakeJob(QRunnable):
+            def __init__(self, path, pane, emit):
+                super().__init__()
+                starts.append(path)
+                holder["pane"] = pane
+                holder["path"] = path
+                holder["emit"] = emit
+
+            def run(self):  # 実 is_dir を打たない（切断ブロック回避）
+                pass
+
+        monkeypatch.setattr(mw, "_PathValidateJob", FakeJob)
+
+        unc = "\\\\server\\share"
+        win.tab_bar.setCurrentIndex(0)          # A をアクティブに戻す
+        win._pending_paths[1] = (unc, False)    # B を未検証ネットワーク pending に
+
+        # 1回目の選択 → ネットワーク＆未検証なので検証開始（1回）
+        win.tab_bar.setCurrentIndex(1)
+        assert starts == [unc]
+
+        # 検証完了前に別タブへ → B は非アクティブ
+        win.tab_bar.setCurrentIndex(0)
+        # 検証完了（無効→フォールバック確定）。非アクティブなので pending に (確定, True)
+        holder["emit"](holder["pane"], holder["path"], False)
+        assert win._pending_paths[1] == (win._default_dir(), True)
+
+        # 再選択 → 検証済みなので再検証せず直接 navigate（検証回数は増えない）
+        win.tab_bar.setCurrentIndex(1)
+        assert starts == [unc]                  # 依然として1回だけ
+        assert win.current_path == win._default_dir()
+
+    def test_close_tab_preserves_validated_marker(
+            self, qapp, tmp_path, monkeypatch):
+        """タブを閉じて index がズレても検証済みマーカーが正しいタブに追従する。"""
+        a, b, c = tmp_path / "ca", tmp_path / "cb", tmp_path / "cc"
+        for d in (a, b, c):
+            d.mkdir()
+        win = _make_window(tmp_path, monkeypatch)
+        win.navigate(str(a))
+        win.new_tab(str(b))
+        win.new_tab(str(c))          # tab0=A, tab1=B, tab2=C
+        win.tab_bar.setCurrentIndex(0)          # A をカレントに固定
+        # tab2 を検証済み確定値の pending にする（カレントではないので消費されない）
+        win._pending_paths[2] = (str(c), True)
+        # 中間の tab1(B) を閉じる → C は index 2→1 に補正され pending は保持される
+        win.close_tab(1)
+        assert 1 in win._pending_paths
+        assert win._pending_paths[1] == (str(c), True)
