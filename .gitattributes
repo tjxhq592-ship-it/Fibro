@@ -1,0 +1,23 @@
+# 既定: テキストは自動判定し、リポジトリ内部(index)は常に LF で保持する。
+* text=auto eol=lf
+
+# Windows 専用スクリプトは作業ツリー側を CRLF にする(index は LF のまま)。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.iss text eol=crlf
+
+# バイナリ: 改行変換・差分表示を行わない。
+*.png binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.zip binary
+*.exe binary
+*.dll binary
+*.db binary
+*.xlsx binary
+*.xls binary
+*.docx binary
