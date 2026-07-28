@@ -1,0 +1,17 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+
+# ハングを「失敗」として必ず終わらせるための恒久設定。
+# 値を伸ばすことは解決策ではない（設計上の欠陥のシグナルとして扱う）。
+# timeout_method: Windows では signal 方式が使えないため thread 固定。
+timeout = 60
+timeout_method = "thread"
+
+# タイムアウト前に全スレッドのスタックを吐かせ、原因特定を可能にする。
+faulthandler_timeout = 90
+
+markers = [
+    "gui: GUI を生成するテスト",
+    "slow: 実行に時間がかかるテスト",
+]
