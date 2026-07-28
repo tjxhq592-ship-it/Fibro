@@ -1,0 +1,32 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    # Windows 専用 API（GetDriveType / IShellLink COM）を叩くため runner も Windows。
+    runs-on: windows-latest
+    # スイート全体のハード上限。pyproject の timeout=60 はテスト1件ごとの上限で、
+    # 収集時フリーズやプロセス終了ブロックのように「テストの外」で固まる経路は
+    # 拾えない。ジョブごと落とす二重の網として置く（現状の実測は 20 秒台）。
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        # 表示なし環境で GUI テストを走らせる。offscreen を指定しないと
+        # QApplication の生成自体が失敗する。
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest tests/
