@@ -6,7 +6,7 @@ QTreeWidget でグループ（フォルダ）によるネストを表現。
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QRunnable, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtCore import Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QInputDialog, QMenu, QMessageBox, QTreeWidget, QTreeWidgetItem,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.gui.icons import material_icon
+from app.gui.jobs import JobTracker, StoppableJob
 from app.gui.theme import current_tokens
 from app.i18n import _
 from app.models.favorite import FavoriteStore
@@ -21,7 +22,7 @@ from app.models.favorite import FavoriteStore
 _ID_ROLE = Qt.ItemDataRole.UserRole
 
 
-class _ReachJob(QRunnable):
+class _ReachJob(StoppableJob):
     """お気に入りの到達性をバックグラウンドで確認する。
 
     切断中のネットワーク/クラウドパスでは is_reachable() が最大2秒ブロックする
@@ -30,19 +31,23 @@ class _ReachJob(QRunnable):
 
     def __init__(self, leaves: list[tuple[str, str, bool]], gen: int,
                  emit) -> None:
-        super().__init__()
+        super().__init__(emit)
         self._leaves = leaves  # (fav_id, path, is_file)
         self._gen = gen
-        self._emit = emit
 
     def run(self) -> None:
         from app.netpath import reachable
-        for fid, path, is_file in self._leaves:
-            self._emit(self._gen, fid,
-                       reachable(path, require_dir=not is_file))
+        try:
+            for fid, path, is_file in self._leaves:
+                if self._stopped:
+                    return
+                self._notify(self._gen, fid,
+                             reachable(path, require_dir=not is_file))
+        finally:
+            self.finished = True
 
 
-class _ActivateJob(QRunnable):
+class _ActivateJob(StoppableJob):
     """クリックされたお気に入りの到達性をバックグラウンドで確認する。
 
     is_reachable() は切断中のネットワーク/クラウドパスで最大2秒ブロック
@@ -51,16 +56,18 @@ class _ActivateJob(QRunnable):
     """
 
     def __init__(self, path: str, is_file: bool, gen: int, emit) -> None:
-        super().__init__()
+        super().__init__(emit)
         self._path = path
         self._is_file = is_file
         self._gen = gen
-        self._emit = emit
 
     def run(self) -> None:
         from app.netpath import reachable
-        self._emit(self._gen,
-                   reachable(self._path, require_dir=not self._is_file))
+        try:
+            self._notify(self._gen,
+                         reachable(self._path, require_dir=not self._is_file))
+        finally:
+            self.finished = True
 
 
 class _FavTree(QTreeWidget):
@@ -123,6 +130,9 @@ class FavoritesSidebar(QWidget):
         self._items_by_id: dict[str, QTreeWidgetItem] = {}
         # refresh() でのツリー再構築中は itemExpanded/itemCollapsed を無視する
         self._restoring = False
+        # 破棄時に実行中ワーカーの通知を止める（消えた C++ オブジェクトへ
+        # emit するとワーカースレッド側で例外になる）。
+        self._jobs = JobTracker(self)
         self._reach_checked.connect(self._apply_reachability)
         self._activate_checked.connect(self._apply_activation)
 
@@ -224,8 +234,8 @@ class FavoritesSidebar(QWidget):
         leaves = [(f.id, f.path, f.is_file) for f in self._store.favorites
                   if not f.is_group and f.path]
         if leaves:
-            QThreadPool.globalInstance().start(
-                _ReachJob(leaves, self._reach_gen, self._reach_checked.emit))
+            QThreadPool.globalInstance().start(self._jobs.track(
+                _ReachJob(leaves, self._reach_gen, self._reach_checked.emit)))
 
     def _apply_reachability(self, gen: int, fav_id: str, ok: bool) -> None:
         """非同期チェック結果を反映。到達不可なら灰色＋(到達不可)、
@@ -253,8 +263,8 @@ class FavoritesSidebar(QWidget):
         if not leaves:
             return
         self._reach_gen += 1
-        QThreadPool.globalInstance().start(
-            _ReachJob(leaves, self._reach_gen, self._reach_checked.emit))
+        QThreadPool.globalInstance().start(self._jobs.track(
+            _ReachJob(leaves, self._reach_gen, self._reach_checked.emit)))
 
     # ---- 追加 ----
     def add_favorite(self, path: str) -> None:
@@ -397,9 +407,9 @@ class FavoritesSidebar(QWidget):
         """
         self._activate_gen += 1
         self._pending_activation = (fav, as_file)
-        QThreadPool.globalInstance().start(_ActivateJob(
+        QThreadPool.globalInstance().start(self._jobs.track(_ActivateJob(
             fav.path, fav.is_file, self._activate_gen,
-            self._activate_checked.emit))
+            self._activate_checked.emit)))
 
     def _apply_activation(self, gen: int, ok: bool) -> None:
         """非同期の到達性確認の結果を受けて遷移/警告する（GUI スレッド）。"""

@@ -760,7 +760,6 @@ class TestNetworkTabValidationOnce:
         検証済みの確定/フォールバック値は pending へ (path, True) で戻り、
         再選択時は再検証せず直接 navigate される。
         """
-        from PySide6.QtCore import QRunnable
         import app.gui.main_window as mw
 
         a, b = tmp_path / "na", tmp_path / "nb"
@@ -774,16 +773,18 @@ class TestNetworkTabValidationOnce:
         starts: list[str] = []
         holder: dict = {}
 
-        class FakeJob(QRunnable):
+        # 本物と同じ土台（停止要求に応じられる）を使う。JobTracker が
+        # request_stop / finished を触るため QRunnable 直下では足りない。
+        class FakeJob(mw.StoppableJob):
             def __init__(self, path, pane, emit):
-                super().__init__()
+                super().__init__(emit)
                 starts.append(path)
                 holder["pane"] = pane
                 holder["path"] = path
                 holder["emit"] = emit
 
             def run(self):  # 実 is_dir を打たない（切断ブロック回避）
-                pass
+                self.finished = True
 
         monkeypatch.setattr(mw, "_PathValidateJob", FakeJob)
 

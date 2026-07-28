@@ -38,10 +38,11 @@ from PySide6.QtWidgets import (  # noqa: E402
 # 待機の既定上限。無制限待ちは禁止（ハングの温床）。
 DEFAULT_WAIT_MS = 5000
 
-# テスト単位ではなくプロセス単位で使い回される想定のスレッド。
-# app.netpath のモジュール level ThreadPoolExecutor がこれに当たる。
-# （プロセス終了時の後始末はセッション終了時にまとめて行う）
-_PERSISTENT_THREAD_PREFIXES = ("ThreadPoolExecutor-",)
+# テスト単位の残留として数えないスレッド。
+# app.netpath は「返らない OS 呼び出し」を使い捨てのデーモンスレッドで包む。
+# 諦めた後も OS 側の呼び出しは走り続けるため、テスト終了時に生きていても
+# 設計どおりであり残留ではない（デーモンなのでプロセス終了も止めない）。
+_PERSISTENT_THREAD_PREFIXES = ("ThreadPoolExecutor-", "fibro-netpath")
 
 
 # =============================================================================
@@ -67,22 +68,17 @@ def _ensure_qapp():
     """
     app = QApplication.instance() or QApplication([])
     yield app
-    _shutdown_module_level_pools()
+    _drain_global_thread_pool()
 
 
-def _shutdown_module_level_pools() -> None:
-    """モジュール level の永続スレッドプールを明示的に停止する。
+def _drain_global_thread_pool() -> None:
+    """セッション終了時に QThreadPool の実行中ジョブを合流させる。
 
-    放置するとインタプリタ終了時に join 待ちで数秒〜無限に止まりうる。
+    残したまま QApplication が壊れると、ジョブ側が触る C++ オブジェクトが
+    先に消えてクラッシュしうる。上限付きで待ち、返らなければ諦める
+    （無制限待ちはハングの温床なので禁止）。
     """
-    try:
-        from app import netpath
-    except Exception:  # noqa: BLE001 — import できなければ何もしない
-        return
-    executor = getattr(netpath, "_EXECUTOR", None)
-    if executor is not None:
-        # 実行中のジョブは 2 秒でタイムアウトするので待たずに畳む
-        executor.shutdown(wait=False, cancel_futures=True)
+    QThreadPool.globalInstance().waitForDone(DEFAULT_WAIT_MS)
 
 
 # =============================================================================

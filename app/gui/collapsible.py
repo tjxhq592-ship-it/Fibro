@@ -169,7 +169,9 @@ class CollapsibleSection(QWidget):
         def _clear_effect() -> None:
             # finished 発火中に effect（アニメの親）を破棄しないよう1tick遅延。
             # 効果を外すことで通常描画へ戻す（QGraphicsOpacityEffect の常駐回避）。
-            QTimer.singleShot(0, lambda: self._content.setGraphicsEffect(None))
+            # context に self を渡し、破棄後に発火しないようにする。
+            QTimer.singleShot(
+                0, self, lambda: self._content.setGraphicsEffect(None))
 
         make_animation(effect, b"opacity", 1.0, MOTION.PANEL, MOTION.EASE_OUT,
                        on_finished=_clear_effect)

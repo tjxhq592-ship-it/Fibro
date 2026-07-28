@@ -12,7 +12,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from PySide6.QtCore import (
-    QDir, QFileInfo, QItemSelectionModel, QModelIndex, QRunnable, Qt,
+    QDir, QFileInfo, QItemSelectionModel, QModelIndex, Qt,
     QThread, QThreadPool, QTimer, Signal,
 )
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
@@ -33,6 +33,7 @@ from app.gui.dnd_views import FolderTreeView
 from app.gui.file_pane import FilePane
 from app.gui.favorites_sidebar import FavoritesSidebar
 from app.gui.icons import material_icon
+from app.gui.jobs import JobTracker, StoppableJob
 from app.gui.places_sidebar import PlacesSidebar
 from app.gui.recent_sidebar import RecentSidebar
 from app.gui.theme import THEME_META, THEME_ORDER, ThemeManager
@@ -275,7 +276,7 @@ class BreadcrumbBar(QWidget):
         self._show_crumbs()
 
 
-class _SelectionSizeJob(QRunnable):
+class _SelectionSizeJob(StoppableJob):
     """選択ファイルのサイズ合計をバックグラウンドで計算する。
 
     OneDrive 等のクラウド/低速パスでは stat() が遅く、GUI スレッドで回すと
@@ -283,24 +284,28 @@ class _SelectionSizeJob(QRunnable):
     """
 
     def __init__(self, paths: list[str], gen: int, emit) -> None:
-        super().__init__()
+        super().__init__(emit)
         self._paths = paths
         self._gen = gen
-        self._emit = emit
 
     def run(self) -> None:
         total = 0
-        for p in self._paths:
-            try:
-                st = os.stat(p)
-                if not stat_module.S_ISDIR(st.st_mode):
-                    total += st.st_size
-            except OSError:
-                pass
-        self._emit(self._gen, total)
+        try:
+            for p in self._paths:
+                if self._stopped:
+                    return
+                try:
+                    st = os.stat(p)
+                    if not stat_module.S_ISDIR(st.st_mode):
+                        total += st.st_size
+                except OSError:
+                    pass
+            self._notify(self._gen, total)
+        finally:
+            self.finished = True
 
 
-class _OpenFileJob(QRunnable):
+class _OpenFileJob(StoppableJob):
     """ファイルを関連付けアプリで開く（バックグラウンド）。
 
     os.startfile は通常ノンブロッキングだが、関連付けが壊れている/未導入の
@@ -310,23 +315,25 @@ class _OpenFileJob(QRunnable):
     """
 
     def __init__(self, path: str, on_fail) -> None:
-        super().__init__()
+        super().__init__(on_fail)
         # QFileSystemModel はスラッシュ区切りを返し、UNC（//server/share/…）だと
         # os.startfile が「ファイルが見つからない」になる。バックスラッシュへ正規化。
         self._path = os.path.normpath(path)
-        self._on_fail = on_fail
 
     def run(self) -> None:
         try:
-            os.startfile(self._path)  # noqa: S606 — ユーザー操作による「開く」
-        except OSError:
             try:
-                os.startfile(self._path, "openas")  # 「プログラムから開く」
-            except OSError as e:
-                self._on_fail(self._path, str(e))
+                os.startfile(self._path)  # noqa: S606 — ユーザー操作による「開く」
+            except OSError:
+                try:
+                    os.startfile(self._path, "openas")  # 「プログラムから開く」
+                except OSError as e:
+                    self._notify(self._path, str(e))
+        finally:
+            self.finished = True
 
 
-class _DiskUsageJob(QRunnable):
+class _DiskUsageJob(StoppableJob):
     """ドライブ空き容量の取得をバックグラウンドで行う。
 
     safe_disk_usage 自体にタイムアウトはあるが、future.result() を GUI
@@ -335,17 +342,19 @@ class _DiskUsageJob(QRunnable):
     """
 
     def __init__(self, path: str, gen: int, emit) -> None:
-        super().__init__()
+        super().__init__(emit)
         self._path = path
         self._gen = gen
-        self._emit = emit
 
     def run(self) -> None:
         from app.netpath import safe_disk_usage
-        self._emit(self._gen, safe_disk_usage(self._path))
+        try:
+            self._notify(self._gen, safe_disk_usage(self._path))
+        finally:
+            self.finished = True
 
 
-class _PathValidateJob(QRunnable):
+class _PathValidateJob(StoppableJob):
     """保存タブのネットワークパスの実在確認をバックグラウンドで行う。
 
     ネットワークパス（UNC・リモート割り当てドライブ）への is_dir は切断時に
@@ -355,17 +364,19 @@ class _PathValidateJob(QRunnable):
     """
 
     def __init__(self, path: str, pane, emit) -> None:
-        super().__init__()
+        super().__init__(emit)
         self._path = path
         self._pane = pane
-        self._emit = emit
 
     def run(self) -> None:
         try:
-            ok = Path(self._path).is_dir()
-        except OSError:
-            ok = False
-        self._emit(self._pane, self._path, ok)
+            try:
+                ok = Path(self._path).is_dir()
+            except OSError:
+                ok = False
+            self._notify(self._pane, self._path, ok)
+        finally:
+            self.finished = True
 
 
 class MainWindow(QMainWindow):
@@ -382,6 +393,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(_("app_title"))
         self.resize(1100, 700)
+        # 破棄後にワーカーがシグナルを emit しないよう、実行中の分を保持して
+        # closeEvent / destroyed でまとめて止める。
+        self._jobs = JobTracker(self)
         self._sel_gen = 0            # 選択世代（古い計算結果を破棄）
         self._sel_count = 0          # 直近の選択件数
         self._size_computed.connect(self._apply_selection_size)
@@ -665,7 +679,9 @@ class MainWindow(QMainWindow):
         self._left_splitter = left
         self._restore_layout()
         # タブ行の実高さにサイドバー見出しの高さを合わせる（QSS 適用後に実行）。
-        QTimer.singleShot(0, self._align_section_headers)
+        # 第2引数の context を渡すと self の破棄で自動キャンセルされる。渡さない
+        # と破棄後に発火して shiboken の "already deleted" を踏む。以降同様。
+        QTimer.singleShot(0, self, self._align_section_headers)
 
         # 各パネルの Ctrl+ホイール ズーム（75〜200%・倍率は settings に保存）
         from app.gui.zoom import ZoomController
@@ -877,8 +893,9 @@ class MainWindow(QMainWindow):
             # 検証済み（再選択で pending に戻された確定/フォールバック値）は
             # ネットワークでも再検証せず直接 navigate する（B3: 検証は最大1回）。
             if not validated and _is_network_path(path):
-                QThreadPool.globalInstance().start(
-                    _PathValidateJob(path, pane, self._tab_path_validated.emit))
+                QThreadPool.globalInstance().start(self._jobs.track(
+                    _PathValidateJob(path, pane,
+                                     self._tab_path_validated.emit)))
             elif not self.navigate(path):
                 fallback = self._default_dir()
                 self.tab_bar.setTabText(index, self._tab_title(fallback))
@@ -1408,7 +1425,7 @@ class MainWindow(QMainWindow):
         self._pending_tree_path = path
         if not self._tree_sync_scheduled:
             self._tree_sync_scheduled = True
-            QTimer.singleShot(0, self._sync_tree_to_path)
+            QTimer.singleShot(0, self, self._sync_tree_to_path)
         sel_model = self.table.selectionModel()
         if sel_model:
             sel_model.selectionChanged.connect(
@@ -1466,8 +1483,8 @@ class MainWindow(QMainWindow):
         """
         self._disk_gen += 1
         self._disk_path = path
-        QThreadPool.globalInstance().start(
-            _DiskUsageJob(path, self._disk_gen, self._disk_usage_ready.emit))
+        QThreadPool.globalInstance().start(self._jobs.track(
+            _DiskUsageJob(path, self._disk_gen, self._disk_usage_ready.emit)))
 
     def _apply_disk_usage(self, gen: int, usage) -> None:
         """非同期取得した空き容量をラベルへ反映（GUI スレッド）。"""
@@ -1541,8 +1558,8 @@ class MainWindow(QMainWindow):
 
     def _open_file(self, path: str) -> None:
         """関連付けアプリでファイルを開く（GUI を固めないよう別スレッド）。"""
-        QThreadPool.globalInstance().start(
-            _OpenFileJob(path, self._open_failed.emit))
+        QThreadPool.globalInstance().start(self._jobs.track(
+            _OpenFileJob(path, self._open_failed.emit)))
 
     def _on_open_failed(self, path: str, err: str) -> None:
         QMessageBox.warning(
@@ -1568,7 +1585,8 @@ class MainWindow(QMainWindow):
         gen = self._sel_gen
         files = paths[:5000]  # 安全弁（大量選択時の上限）
         emit = self._size_computed.emit
-        QThreadPool.globalInstance().start(_SelectionSizeJob(files, gen, emit))
+        QThreadPool.globalInstance().start(
+            self._jobs.track(_SelectionSizeJob(files, gen, emit)))
 
     def _apply_selection_size(self, gen: int, total: int) -> None:
         """非同期で求めた選択サイズ合計を反映（最新の選択のみ）。"""
@@ -1614,7 +1632,7 @@ class MainWindow(QMainWindow):
             if ok:
                 if key == "__created__":
                     QTimer.singleShot(
-                        0, lambda b=before: self._select_new_file(b))
+                        0, self, lambda b=before: self._select_new_file(b))
                 elif key and key in callables:
                     callables[key]()
                 return
@@ -1870,7 +1888,7 @@ class MainWindow(QMainWindow):
         self._op_thread = thread
         thread.start()
         # 一瞬で終わる操作のちらつきを避け、200ms 後にまだ実行中なら表示する。
-        QTimer.singleShot(200, self._maybe_show_progress)
+        QTimer.singleShot(200, self, self._maybe_show_progress)
 
     def _finish_op_thread(self) -> None:
         """完了シグナル受信後のスレッド合流と進捗 UI の後片付け。"""
@@ -2087,7 +2105,7 @@ class MainWindow(QMainWindow):
             return
         # QFileSystemModel はカレントを監視しており作成は自動で一覧へ反映される。
         # 重い全再スキャン（refresh の setRootPath 往復）は避け、反映後に選択する。
-        QTimer.singleShot(0, lambda n=target.name: self._select_by_name(n))
+        QTimer.singleShot(0, self, lambda n=target.name: self._select_by_name(n))
 
     def new_text_file(self) -> None:
         name, ok = QInputDialog.getText(
@@ -2106,7 +2124,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, _("dlg_create_fail"), str(e))
             return
         # 監視中のモデルが自動反映するため全再スキャンは不要。反映後に選択。
-        QTimer.singleShot(0, lambda n=target.name: self._select_by_name(n))
+        QTimer.singleShot(0, self, lambda n=target.name: self._select_by_name(n))
 
     def _add_shellnew_actions(self, menu: QMenu) -> bool:
         """Windows の ShellNew 登録型をメニューに展開。1件でも出せたら True。"""
@@ -2133,7 +2151,7 @@ class MainWindow(QMainWindow):
         except OSError as e:
             QMessageBox.critical(self, _("dlg_create_fail"), str(e))
             return
-        QTimer.singleShot(0, lambda n=target.name: self._select_by_name(n))
+        QTimer.singleShot(0, self, lambda n=target.name: self._select_by_name(n))
 
     def _template_dir(self) -> Path:
         return CONFIG_DIR / "templates"
@@ -2394,7 +2412,7 @@ class MainWindow(QMainWindow):
             total = sp.size().width()
             right_w = max(total - left_w - sp.handleWidth(), 1)
             sp.setSizes([left_w, right_w])
-        QTimer.singleShot(0, _keep_left)
+        QTimer.singleShot(0, self, _keep_left)
 
     def _restore_layout(self) -> None:
         layout = self.theme_manager.get("layout", {})
@@ -2455,6 +2473,8 @@ class MainWindow(QMainWindow):
         self.theme_manager.set("columns", state.toBase64().data().decode())
 
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt API
+        # 走行中のワーカーからの通知を止める（結果は破棄されるウィンドウ宛）。
+        self._jobs.stop_all()
         self._save_tabs()
         self._save_columns()
         self._save_layout()
@@ -2469,6 +2489,12 @@ class MainWindow(QMainWindow):
                 worker.cancel()
             self._op_thread.quit()
             self._op_thread.wait(3000)
+        # __init__ でアプリ全体に張ったフィルタを外す。外さないとウィンドウが
+        # 破棄されても QApplication がこのインスタンスを掴んだままになり、
+        # 生存ウィンドウ数に比例してイベント処理が重くなる（O(N^2) 劣化）。
+        app = QApplication.instance()
+        if app:
+            app.removeEventFilter(self)
         super().closeEvent(event)
 
     # ---- リネーム / Undo ----

@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import sys
 
-from PySide6.QtCore import QEvent, QRunnable, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtCore import QEvent, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QInputDialog, QListWidget, QListWidgetItem, QMenu, QVBoxLayout, QWidget,
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from app.i18n import _
 from app.gui.icons import material_icon
+from app.gui.jobs import JobTracker, StoppableJob
 from app.gui.theme import current_tokens
 
 _PATH_ROLE = Qt.ItemDataRole.UserRole       # 実パス
@@ -32,22 +33,26 @@ _KIND_ICON = {
 }
 
 
-class _PlaceReachJob(QRunnable):
+class _PlaceReachJob(StoppableJob):
     """場所の到達性をバックグラウンドで確認する（UI をブロックしない）。"""
 
     def __init__(self, places: list, gen: int, emit) -> None:
-        super().__init__()
+        super().__init__(emit)
         self._places = places   # list[(index, path)]
         self._gen = gen
-        self._emit = emit
 
     def run(self) -> None:
         from app.netpath import reachable
-        for idx, path in self._places:
-            self._emit(self._gen, idx, reachable(path))
+        try:
+            for idx, path in self._places:
+                if self._stopped:
+                    return
+                self._notify(self._gen, idx, reachable(path))
+        finally:
+            self.finished = True
 
 
-class _PlacesLoadJob(QRunnable):
+class _PlacesLoadJob(StoppableJob):
     """場所一覧の取得をバックグラウンドで行う（起動時の同期 I/O を排除）。
 
     get_all_places() はレジストリ読み・ネットワークショートカットの
@@ -56,9 +61,8 @@ class _PlacesLoadJob(QRunnable):
     """
 
     def __init__(self, gen: int, emit) -> None:
-        super().__init__()
+        super().__init__(emit)
         self._gen = gen
-        self._emit = emit
 
     def run(self) -> None:
         co_inited = False
@@ -81,7 +85,8 @@ class _PlacesLoadJob(QRunnable):
                     ctypes.windll.ole32.CoUninitialize()
                 except Exception:   # noqa: BLE001
                     pass
-        self._emit(self._gen, places)
+        self._notify(self._gen, places)
+        self.finished = True
 
 
 class PlacesSidebar(QWidget):
@@ -100,6 +105,9 @@ class PlacesSidebar(QWidget):
         self._load_gen = 0          # 場所取得の世代（古い結果を破棄）
         # パス（normcase）→ ユーザー設定の表示名。
         self._custom_names: dict[str, str] = {}
+        # 破棄時に実行中ワーカーの通知を止める（消えた C++ オブジェクトへ
+        # emit するとワーカースレッド側で例外になる）。
+        self._jobs = JobTracker(self)
         self._load_custom_names()
         self._reach_checked.connect(self._apply_reachability)
         self._places_loaded.connect(self._on_places_loaded)
@@ -149,7 +157,8 @@ class PlacesSidebar(QWidget):
         """場所取得をワーカースレッドで開始する（起動をブロックしない）。"""
         self._load_gen += 1
         QThreadPool.globalInstance().start(
-            _PlacesLoadJob(self._load_gen, self._places_loaded.emit))
+            self._jobs.track(_PlacesLoadJob(self._load_gen,
+                                            self._places_loaded.emit)))
 
     def _on_places_loaded(self, gen: int, places: list) -> None:
         """ワーカーが取得した場所一覧を反映し、到達性チェックを予約する。"""
@@ -157,7 +166,8 @@ class PlacesSidebar(QWidget):
             return  # 古い取得結果は破棄
         self._places = places
         self._rebuild_list()
-        QTimer.singleShot(500, self._check_reachability)
+        # context に self を渡し、破棄後に発火しないようにする。
+        QTimer.singleShot(500, self, self._check_reachability)
 
     def _rebuild_list(self) -> None:
         """現在の self._places とカスタム表示名からリストを構築する（GUI スレッド）。"""
@@ -182,8 +192,8 @@ class PlacesSidebar(QWidget):
             return
         self._reach_gen += 1
         QThreadPool.globalInstance().start(
-            _PlaceReachJob(targets, self._reach_gen,
-                           self._reach_checked.emit))
+            self._jobs.track(_PlaceReachJob(targets, self._reach_gen,
+                                            self._reach_checked.emit)))
 
     def _apply_reachability(self, gen: int, idx: int, ok: bool) -> None:
         """到達性チェック結果を反映: 到達不可→グレー表示。"""
