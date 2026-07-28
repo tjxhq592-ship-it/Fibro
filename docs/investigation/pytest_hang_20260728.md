@@ -363,3 +363,46 @@ QT_QPA_PLATFORM=offscreen python -m pytest tests/ -v \
 # 単体では完走することの確認
 python -m pytest tests/test_projects.py -q --timeout=120   # ≈105 秒
 ```
+
+---
+
+## 11. 実施結果（Phase 1 / Phase 2 の追記）
+
+§9 は Phase 0 時点の見積もりであり、実装で変わった点を含めてここに実績を残す。
+以下は調査後に別コミットで入れた内容で、§0〜§10 の調査結果自体は変更していない。
+
+### 11.1 実施内容と見積もりからの差分
+
+| 原因 | 実施した対処 | §9 の見積もりとの差分 |
+|---|---|---|
+| F | `closeEvent` で `app.removeEventFilter(self)`。`QTimer.singleShot` を全て 3 引数（context 付き）へ統一（`main_window` 8 / `collapsible` 1 / `places_sidebar` 1） | 「lambda の自己参照解消」ではなく context 引数で解決。PySide6 は `singleShot(msec, context, callable)` を持ち、context の破棄で自動キャンセルされる（`probe_singleshot.py` で実測確認） |
+| B | `app/gui/jobs.py` を新設（`StoppableJob` / `JobTracker`）。`QRunnable` 派生 8 ジョブを移行（`main_window` 4 / `favorites_sidebar` 2 / `places_sidebar` 2） | §9 に項目が無かった。singleShot 修正後、プロセス終了時に `Error calling Python override of QRunnable::run()` が残ったため追加。破棄済みの受け手への emit が原因 |
+| E | `netpath` の `ThreadPoolExecutor` を、呼び出しごとの使い捨てデーモンスレッドへ置換 | `aboutToQuit` 連動ではなくデーモン化で解決。プールのワーカーは非デーモンで `concurrent.futures` の atexit フックに join されるため、`shutdown(wait=False)` しても到達不可パスの `os.path.isdir` が返るまで終了がブロックされる。固定 `max_workers` による頭詰まりも同時に解消 |
+| G | `CONFIG_DIR` の tmp 強制・単一インスタンスのサーバ名ユニーク化（conftest） | 見積もりどおり |
+
+`app/gui/thumbnails.py` の `_ThumbJob` は移行対象から外した。`ThumbnailLoader` が
+自前の `QThreadPool(self)` を持ち（デストラクタが合流する）モジュール単位の
+シングルトンとして生存し続けるため、破棄済み受け手への emit が起きない。
+
+### 11.2 受け入れ条件の検証結果
+
+| 条件 | 結果 |
+|---|---|
+| 全体実行がハングしない（目標 5 分以内） | 19.1〜19.4 秒（ハング時は 90 秒でも終わらず） |
+| サマリ出力後 5 秒以内にプロセス終了 | 実測 約 1.3 秒（wall 20.4s − pytest 19.1s、インタプリタ起動込み） |
+| offscreen で動作 | `QT_QPA_PLATFORM=offscreen` で実施 |
+| 順序を入れ替えても結果が変わらない | ファイル逆順実行で同一結果（3 failed） |
+| 連続 2 回とも同じ結果 | 19.36s / 19.14s、いずれも 3 failed 394 passed 1 skipped |
+| タイムアウト設定が恒久化 | `pyproject.toml` に `timeout=60` / `timeout_method="thread"` / `faulthandler_timeout=90` |
+| スレッド残留 fixture が有効 | conftest の autouse fixture が残留を failure にする。`fibro-netpath` は設計上のデーモンスレッドとして除外 |
+| 説明のない skip / xfail がゼロ | skip は 1 件のみ（`test_projects.py:216`「表示できる場所がない環境」= 環境条件付き、ハング対応とは無関係）。xfail は 0 件 |
+| CRLF の混在が無い | `git ls-files --eol` に CRLF なし（i/lf 108・i/-text 15・i/none 4） |
+
+### 11.3 残存する失敗（ハングとは別課題）
+
+§8 に記載した既存の機能不整合 3 件が残る。いずれも `test_panes_tabs_preview.py` で、
+ハング対応の前後で内容が変わっていない。
+
+- `TestCombinedContextMenu::test_build_combined_items`（:320）
+- `TestToolbarRemovalAndShortcuts::test_theme_toggle_in_settings_menu`（:408）
+- `TestToolbarRemovalAndShortcuts::test_help_menu_present`（:415）
