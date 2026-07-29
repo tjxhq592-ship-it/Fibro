@@ -6,12 +6,14 @@
 """
 from __future__ import annotations
 
+import sys
 import threading
 
 import pytest
 from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import QApplication, QWidget
 
+from app.gui.jobs import StoppableJob
 from tests import conftest
 
 
@@ -159,6 +161,76 @@ class TestThreadResidueDetection:
         finally:
             stop.set()
             thread.join(timeout=2)
+
+
+class _BoomJob(StoppableJob):
+    """_work() が必ず例外を投げるワーカー（例外経路の検査用）。"""
+
+    def _work(self) -> None:
+        raise RuntimeError("boom")
+
+
+class _EmitJob(StoppableJob):
+    """_work() で 1 回だけ通知するワーカー。"""
+
+    def _work(self) -> None:
+        self._notify("done")
+
+
+class TestStoppableJobLifecycle:
+    """StoppableJob.run() が例外と finished を必ず引き受ける。
+
+    ワーカーの例外はワーカースレッドで起きるので GUI からは何も見えず、
+    finished を立て忘れると JobTracker._jobs から永久に落ちなくなる。
+    どちらも「壊れても静か」な種類なので、基底の責務としてここで固定する。
+    サブクラスが run() を書けばこの網を素通りできてしまうため、
+    app/gui/ に StoppableJob 派生の run() を足さないこと。
+    """
+
+    def test_exception_in_work_is_absorbed_and_marks_finished(self, monkeypatch):
+        """_work() の例外は run() の外へ漏れず、finished は立つ。
+
+        漏れると Qt 側で「Error calling Python override of QRunnable::run()」に
+        なり、finished が立たないまま JobTracker に残り続ける。
+        """
+        # 既定の excepthook は stderr へトレースバックを吐く。ここでは
+        # 通ったことだけ確認できればよいので黙らせる（呼ばれること自体は
+        # test_exception_is_reported_to_excepthook で見る）。
+        monkeypatch.setattr(sys, "excepthook", lambda *info: None)
+        job = _BoomJob(lambda *args: None)
+        job.run()   # 例外が漏れればここで落ちる
+        assert job.finished is True, "例外で終わったワーカーの finished が立たない"
+
+    def test_exception_is_reported_to_excepthook(self, monkeypatch):
+        """例外は握り潰さず sys.excepthook へ流す（error.log に残る経路）。"""
+        seen = []
+        monkeypatch.setattr(sys, "excepthook",
+                            lambda *info: seen.append(info))
+        _BoomJob(lambda *args: None).run()
+        assert len(seen) == 1, f"excepthook が呼ばれていない: {seen}"
+        exc_type, exc, _tb = seen[0]
+        assert exc_type is RuntimeError
+        assert "boom" in str(exc)
+
+    def test_normal_work_marks_finished_and_notifies(self):
+        """正常終了でも finished は立ち、通知は届く。"""
+        got = []
+        job = _EmitJob(got.append)
+        job.run()
+        assert job.finished is True
+        assert got == ["done"]
+
+    def test_stopped_job_does_not_notify(self):
+        """request_stop 済みなら _notify を呼んでも emit しない。
+
+        受け手（ウィジェット）が破棄済みでも安全に走り切れること。
+        """
+        got = []
+        job = _EmitJob(got.append)
+        job.request_stop()
+        job.run()
+        assert got == [], f"停止済みワーカーが通知した: {got}"
+        assert job.finished is True
 
 
 class TestModalBlocking:

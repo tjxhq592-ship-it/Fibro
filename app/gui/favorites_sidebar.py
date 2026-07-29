@@ -35,16 +35,13 @@ class _ReachJob(StoppableJob):
         self._leaves = leaves  # (fav_id, path, is_file)
         self._gen = gen
 
-    def run(self) -> None:
+    def _work(self) -> None:
         from app.netpath import reachable
-        try:
-            for fid, path, is_file in self._leaves:
-                if self._stopped:
-                    return
-                self._notify(self._gen, fid,
-                             reachable(path, require_dir=not is_file))
-        finally:
-            self.finished = True
+        for fid, path, is_file in self._leaves:
+            if self._stopped:
+                return
+            self._notify(self._gen, fid,
+                         reachable(path, require_dir=not is_file))
 
 
 class _ActivateJob(StoppableJob):
@@ -61,13 +58,10 @@ class _ActivateJob(StoppableJob):
         self._is_file = is_file
         self._gen = gen
 
-    def run(self) -> None:
+    def _work(self) -> None:
         from app.netpath import reachable
-        try:
-            self._notify(self._gen,
-                         reachable(self._path, require_dir=not self._is_file))
-        finally:
-            self.finished = True
+        self._notify(self._gen,
+                     reachable(self._path, require_dir=not self._is_file))
 
 
 class _FavTree(QTreeWidget):

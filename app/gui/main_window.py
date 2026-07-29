@@ -288,21 +288,18 @@ class _SelectionSizeJob(StoppableJob):
         self._paths = paths
         self._gen = gen
 
-    def run(self) -> None:
+    def _work(self) -> None:
         total = 0
-        try:
-            for p in self._paths:
-                if self._stopped:
-                    return
-                try:
-                    st = os.stat(p)
-                    if not stat_module.S_ISDIR(st.st_mode):
-                        total += st.st_size
-                except OSError:
-                    pass
-            self._notify(self._gen, total)
-        finally:
-            self.finished = True
+        for p in self._paths:
+            if self._stopped:
+                return
+            try:
+                st = os.stat(p)
+                if not stat_module.S_ISDIR(st.st_mode):
+                    total += st.st_size
+            except OSError:
+                pass
+        self._notify(self._gen, total)
 
 
 class _OpenFileJob(StoppableJob):
@@ -320,17 +317,14 @@ class _OpenFileJob(StoppableJob):
         # os.startfile が「ファイルが見つからない」になる。バックスラッシュへ正規化。
         self._path = os.path.normpath(path)
 
-    def run(self) -> None:
+    def _work(self) -> None:
         try:
+            os.startfile(self._path)  # noqa: S606 — ユーザー操作による「開く」
+        except OSError:
             try:
-                os.startfile(self._path)  # noqa: S606 — ユーザー操作による「開く」
-            except OSError:
-                try:
-                    os.startfile(self._path, "openas")  # 「プログラムから開く」
-                except OSError as e:
-                    self._notify(self._path, str(e))
-        finally:
-            self.finished = True
+                os.startfile(self._path, "openas")  # 「プログラムから開く」
+            except OSError as e:
+                self._notify(self._path, str(e))
 
 
 class _DiskUsageJob(StoppableJob):
@@ -346,12 +340,9 @@ class _DiskUsageJob(StoppableJob):
         self._path = path
         self._gen = gen
 
-    def run(self) -> None:
+    def _work(self) -> None:
         from app.netpath import safe_disk_usage
-        try:
-            self._notify(self._gen, safe_disk_usage(self._path))
-        finally:
-            self.finished = True
+        self._notify(self._gen, safe_disk_usage(self._path))
 
 
 class _PathValidateJob(StoppableJob):
@@ -368,15 +359,12 @@ class _PathValidateJob(StoppableJob):
         self._path = path
         self._pane = pane
 
-    def run(self) -> None:
+    def _work(self) -> None:
         try:
-            try:
-                ok = Path(self._path).is_dir()
-            except OSError:
-                ok = False
-            self._notify(self._pane, self._path, ok)
-        finally:
-            self.finished = True
+            ok = Path(self._path).is_dir()
+        except OSError:
+            ok = False
+        self._notify(self._pane, self._path, ok)
 
 
 class _NavReachJob(StoppableJob):
@@ -396,12 +384,9 @@ class _NavReachJob(StoppableJob):
         self._path = path
         self._gen = gen
 
-    def run(self) -> None:
+    def _work(self) -> None:
         from app.netpath import reachable
-        try:
-            self._notify(self._gen, self._path, reachable(self._path))
-        finally:
-            self.finished = True
+        self._notify(self._gen, self._path, reachable(self._path))
 
 
 class MainWindow(QMainWindow):

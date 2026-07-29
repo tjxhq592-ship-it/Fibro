@@ -96,19 +96,16 @@ class _ThumbJob(StoppableJob):
         self._loader = loader
         self._key = key
 
-    def run(self) -> None:  # ワーカースレッド
-        try:
-            if self._stopped:
-                # 受け手が消えている。デコードするだけ無駄なので取りやめ、
-                # 「生成中」の印だけ外す（キャッシュには何も残さない）。
-                self._loader._forget(self._key)
-                return
-            path, size = self._key
-            img = _make_thumbnail_image(path, size)
-            self._loader._store_result(self._key, img)
-            self._notify()
-        finally:
-            self.finished = True
+    def _work(self) -> None:  # ワーカースレッド
+        if self._stopped:
+            # 受け手が消えている。デコードするだけ無駄なので取りやめ、
+            # 「生成中」の印だけ外す（キャッシュには何も残さない）。
+            self._loader._forget(self._key)
+            return
+        path, size = self._key
+        img = _make_thumbnail_image(path, size)
+        self._loader._store_result(self._key, img)
+        self._notify()
 
 
 class ThumbnailLoader(QObject):

@@ -41,15 +41,12 @@ class _PlaceReachJob(StoppableJob):
         self._places = places   # list[(index, path)]
         self._gen = gen
 
-    def run(self) -> None:
+    def _work(self) -> None:
         from app.netpath import reachable
-        try:
-            for idx, path in self._places:
-                if self._stopped:
-                    return
-                self._notify(self._gen, idx, reachable(path))
-        finally:
-            self.finished = True
+        for idx, path in self._places:
+            if self._stopped:
+                return
+            self._notify(self._gen, idx, reachable(path))
 
 
 class _PlacesLoadJob(StoppableJob):
@@ -64,7 +61,10 @@ class _PlacesLoadJob(StoppableJob):
         super().__init__(emit)
         self._gen = gen
 
-    def run(self) -> None:
+    def _work(self) -> None:
+        # COM の初期化/解除はワーカースレッド自身のアパートメントで閉じる。
+        # 基底（StoppableJob）はスレッドを跨ぐ知識を持たないので、この対は
+        # ここに置いたままにすること。
         co_inited = False
         if sys.platform == "win32":
             try:
@@ -86,7 +86,6 @@ class _PlacesLoadJob(StoppableJob):
                 except Exception:   # noqa: BLE001
                     pass
         self._notify(self._gen, places)
-        self.finished = True
 
 
 class PlacesSidebar(QWidget):
