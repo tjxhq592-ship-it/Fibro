@@ -31,6 +31,22 @@ def _make_window(tmp_path, monkeypatch):
     return MainWindow()
 
 
+def _load_places(win) -> None:
+    """クイックアクセスの場所一覧を同期で埋める。
+
+    列挙は _PlacesLoadJob（ワーカー）で走るため、MainWindow を作った直後は
+    list が空のままになる。これを「表示できる場所がない環境」と読み替えて
+    skip すると、実際には環境の問題ではないのに、どの環境でも永久に走らない
+    テストになる（実測: Windows 実機でも skip されていた）。ワーカーが返す
+    のと同じ値を同じハンドラへ渡して、列挙結果そのものを待たずに反映する。
+    """
+    sidebar = win.places_sidebar
+    if sidebar.list.count():
+        return
+    from app.places import get_all_places
+    sidebar._on_places_loaded(sidebar._load_gen, get_all_places())
+
+
 # ---- 1. マイグレーション ----
 class TestMigration:
     def test_moves_project_scoped_keys(self, tmp_path):
@@ -212,8 +228,9 @@ class TestProjectSwitch:
     def test_place_names_swap_on_switch(self, qapp, tmp_path, monkeypatch):
         """項目5: クイックアクセス表示名が新プロジェクトの place_names になる。"""
         win = _make_window(tmp_path, monkeypatch)
+        _load_places(win)
         if win.places_sidebar.list.count() == 0:
-            pytest.skip("表示できる場所がない環境")
+            pytest.skip("場所を1件も列挙できない環境（get_all_places が空）")
         from app.gui.places_sidebar import _PATH_ROLE
         item = win.places_sidebar.list.item(0)
         key = os.path.normcase(item.data(_PATH_ROLE))

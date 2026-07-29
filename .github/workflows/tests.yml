@@ -19,10 +19,28 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
+          # キャッシュ対象は pip のダウンロード（キーは requirements.txt のハッシュ）。
+          # テスト結果も収集結果もキャッシュしない。pytest 自身の .pytest_cache も
+          # 復元しない（毎回まっさらに収集する）ので、下の件数はキャッシュヒットの
+          # 有無に関わらず必ずその回の実測になる。
           cache: pip
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      - name: Collected test count
+        # 収集件数をログに残す。テストが「落ちる」のではなく「収集されなくなる」
+        # 壊れ方（import 失敗・ファイル名の衝突・conftest の事故）は緑のまま
+        # 通ってしまうため、件数を毎回見えるところに出す。
+        shell: bash          # windows-latest の既定は PowerShell。tail を使うため
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          # ファイル別の件数。pyproject の addopts に -q があるので、ここで -q を
+          # 足すと -qq 相当になりファイル別の件数表示に変わる（合計行は消える）。
+          pytest tests/ --collect-only -q
+          # 合計。-q を足さないほうを使う（足すと上記のとおり合計が出ない）。
+          pytest tests/ --collect-only | tail -1
 
       - name: Run tests
         # 表示なし環境で GUI テストを走らせる。offscreen を指定しないと
