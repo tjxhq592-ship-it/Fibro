@@ -18,11 +18,13 @@ from app.engine.index_engine import SearchIndex
 from app.engine.search_engine import (
     SearchHit, SearchMode, SearchOptions, SearchStats, is_wildcard, search,
 )
+from app.gui.icons import material_pixmap
 from app.i18n import _
 from app.paths import INDEX_DB
 
 INDEX_MAX_AGE_SEC = 10 * 60  # これより古いインデックスは自動再構築
 MAX_RESULTS = 5000           # 一覧に積む上限（超過分は件数だけ数えて通知）
+_LOCK_ICON_PX = 14           # ルート表示行の錠アイコン（本文フォントに合わせた小サイズ）
 
 _KIND_ICON = {
     SearchMode.FILENAME: "📁",
@@ -182,22 +184,39 @@ class SearchPanel(QWidget):
         self._update_root_label()
 
     def _update_root_label(self) -> None:
-        if self._state is SearchState.IDLE:
+        locked = self._state is not SearchState.IDLE
+        self.root_lock_icon.setVisible(locked)
+        if not locked:
             self.root_label.setText(_("search_root").format(path=self._root))
             self.root_label.setToolTip("")
+            self.root_lock_icon.setToolTip("")
         else:
             path = self._pinned_root or self._root
             self.root_label.setText(
                 _("search_root_locked").format(path=path))
             self.root_label.setToolTip(_("search_root_locked_tip"))
+            self.root_lock_icon.setToolTip(_("search_root_locked_tip"))
+
+    def refresh_icons(self) -> None:
+        """テーマ変更後、テーマ色で錠アイコンを描き直す（main_window から呼ぶ）。"""
+        self.root_lock_icon.setPixmap(material_pixmap("lock", _LOCK_ICON_PX))
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
 
+        # ルート表示行: ロック中だけ左端に錠アイコン（Material Symbols "lock"）。
+        # 折り返し時に1行目の脇へ来るよう上寄せで並べる。
+        root_row = QHBoxLayout()
+        root_row.setSpacing(4)
+        self.root_lock_icon = QLabel()
+        self.root_lock_icon.setPixmap(material_pixmap("lock", _LOCK_ICON_PX))
+        self.root_lock_icon.hide()
+        root_row.addWidget(self.root_lock_icon, 0, Qt.AlignmentFlag.AlignTop)
         self.root_label = QLabel(_("search_root").format(path=self._root))
         self.root_label.setWordWrap(True)
-        layout.addWidget(self.root_label)
+        root_row.addWidget(self.root_label, 1)
+        layout.addLayout(root_row)
 
         row = QHBoxLayout()
         self.keyword_edit = QLineEdit()

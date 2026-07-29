@@ -19,7 +19,7 @@ _SVG_TEMPLATE = (
 
 # Material Symbols (Apache-2.0) は塗りつぶし方式。viewBox が異なるため別テンプレート。
 _MATERIAL_SVG_TEMPLATE = (
-    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
+    '<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" '
     'viewBox="0 -960 960 960" fill="{color}">{body}</svg>'
 )
 
@@ -79,6 +79,13 @@ _MATERIAL_PATHS = {
         '74-34 114ZM160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h240'
         'l80 80h320q33 0 56.5 23.5T880-640v400q0 33-23.5 56.5T800-160H160Zm0-80h640'
         'v-400H447l-80-80H160v480Zm0 0v-480 480Z"/>',
+    "lock":
+        '<path d="M240-80q-33 0-56.5-23.5T160-160v-400q0-33 23.5-56.5T240-640h40'
+        'v-80q0-83 58.5-141.5T480-920q83 0 141.5 58.5T680-720v80h40q33 0 56.5 '
+        '23.5T800-560v400q0 33-23.5 56.5T720-80H240Zm0-80h480v-400H240v400Zm296.5'
+        '-143.5Q560-327 560-360t-23.5-56.5Q513-440 480-440t-56.5 23.5Q400-393 '
+        '400-360t23.5 56.5Q447-280 480-280t56.5-23.5ZM360-640h240v-80q0-50-35-85'
+        't-85-35q-50 0-85 35t-35 85v80ZM240-160v-400 400Z"/>',
     "settings":
         '<path d="m370-80-16-128q-13-5-24.5-12T307-235l-119 50L78-375l103-78q-1'
         '-7-1-13.5v-27q0-6.5 1-13.5L78-585l110-190 119 50q11-8 23-15t24-12l16'
@@ -147,10 +154,20 @@ def feather_icon(name: str, color: str | None = None) -> QIcon:
     return QIcon(pixmap)
 
 
-def material_icon(name: str, color: str | None = None) -> QIcon:
-    """Material Symbols のアイコンを名前と現在テーマから生成。"""
+def material_pixmap(name: str, size: int = 24,
+                    color: str | None = None) -> QPixmap:
+    """Material Symbols のアイコンを指定サイズで描画した QPixmap を返す。
+
+    QIcon を経由せず SVG を目的のサイズで直接ラスタライズするので、
+    ラベル脇に置く小さいアイコン（14px など）でも輪郭がぼやけない。
+    """
     svg = _MATERIAL_SVG_TEMPLATE.format(
-        color=_icon_color(color), body=_MATERIAL_PATHS[name])
+        size=size, color=_icon_color(color), body=_MATERIAL_PATHS[name])
     pixmap = QPixmap()
     pixmap.loadFromData(QByteArray(svg.encode()), "SVG")
-    return QIcon(pixmap)
+    return pixmap
+
+
+def material_icon(name: str, color: str | None = None) -> QIcon:
+    """Material Symbols のアイコンを名前と現在テーマから生成。"""
+    return QIcon(material_pixmap(name, 24, color))

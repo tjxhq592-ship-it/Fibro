@@ -275,7 +275,8 @@ _STRINGS: dict[str, dict[str, str]] = {
     "search_cancelling":  {"ja": "キャンセルしています…", "en": "Cancelling…"},
     "search_cancelled_n": {"ja": "キャンセルしました（{n}件まで表示）",
                            "en": "Cancelled (showing first {n} results)"},
-    "search_root_locked": {"ja": "🔒 検索場所: {path}",  "en": "🔒 Search in: {path}"},
+    # 錠マークは search_panel 側の Material Symbols "lock" アイコンで表示する
+    "search_root_locked": {"ja": "検索場所: {path}",    "en": "Search in: {path}"},
     "search_root_locked_tip": {
         "ja": "検索中・結果表示中はディレクトリを変更できません。リセットで解除されます",
         "en": "Directory is locked while searching or showing results. Press Reset to unlock."},

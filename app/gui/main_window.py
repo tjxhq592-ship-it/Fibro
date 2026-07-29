@@ -2403,6 +2403,8 @@ class MainWindow(QMainWindow):
         self.settings_btn.setIcon(material_icon("settings"))
         self.shortcuts_btn.setIcon(material_icon("keyboard_command_key"))
         self.help_btn.setIcon(material_icon("help"))
+        if self.search_panel is not None:
+            self.search_panel.refresh_icons()
 
     def rename_single(self) -> None:
         """F2: 選択中1件をその場でリネーム（RenameExecutor 経由で Undo 可）。"""
