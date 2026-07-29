@@ -882,6 +882,110 @@ class TestNetworkPathDetection:
             mw._drive_type.cache_clear()
 
 
+def _unreachable(_arg):
+    """OS 呼び出しの代役。即座に失敗するので 2 秒待たずに否定結果を作れる。"""
+    raise OSError("unreachable")
+
+
+class TestNetPathNegativeCache:
+    """否定キャッシュ（netpath._negative）の掃除。
+
+    到達不可パスを問い合わせるたびに 1 件積まれる。以前は「今引き直した
+    キー」の期限切れしか消していなかったので、二度と問い合わせないパス
+    （消したお気に入り・抜いた USB）の分が寿命を過ぎても残り続けた。
+    量は知れているが、上限も掃除もない辞書はいつか効いてくる。
+
+    実際に 2 秒待つと遅いので、_negative を直接組んで期限を作る。
+    """
+
+    def test_negative_entries_accumulate_per_path(self):
+        """到達不可パスの数だけエントリが積まれる（掃除の前提）。"""
+        import time
+        from app import netpath
+        netpath.clear_cache()
+        try:
+            for i in range(3):
+                got = netpath._call_with_timeout(
+                    _unreachable, f"\\\\srv\\share{i}", 1.0, False, "isdir")
+                assert got is False
+            assert len(netpath._negative) == 3, (
+                f"否定キャッシュが積まれていない: {netpath._negative}")
+            # 全件が TTL の範囲内で入っていること
+            now = time.monotonic()
+            assert all(now < exp <= now + netpath._NEGATIVE_TTL
+                       for exp in netpath._negative.values())
+        finally:
+            netpath.clear_cache()
+
+    def test_expired_entries_are_swept_on_next_call(self):
+        """次の問い合わせで、引いていないキーの期限切れもまとめて消える。"""
+        import time
+        from app import netpath
+        netpath.clear_cache()
+        try:
+            now = time.monotonic()
+            with netpath._lock:
+                netpath._negative[("isdir", "\\\\gone\\a")] = now - 1.0
+                netpath._negative[("isdir", "\\\\gone\\b")] = now - 30.0
+                netpath._negative[("isdir", "\\\\alive\\c")] = now + 300.0
+            netpath._call_with_timeout(_unreachable, "\\\\srv\\other", 1.0,
+                                       False, "isdir")
+            keys = set(netpath._negative)
+            assert ("isdir", "\\\\gone\\a") not in keys, "期限切れが残っている"
+            assert ("isdir", "\\\\gone\\b") not in keys, "期限切れが残っている"
+            assert ("isdir", "\\\\alive\\c") in keys, (
+                "期限内のエントリまで消している（掃除が乱暴）")
+            assert ("isdir", "\\\\srv\\other") in keys, (
+                "今回の否定結果が記録されていない")
+        finally:
+            netpath.clear_cache()
+
+    def test_unexpired_entry_short_circuits_without_os_call(self):
+        """期限内の否定結果があれば OS へ問い合わせない（従来どおり）。"""
+        import time
+        from app import netpath
+        netpath.clear_cache()
+        calls = []
+
+        def _spy(arg):
+            calls.append(arg)
+            raise OSError("unreachable")
+
+        try:
+            with netpath._lock:
+                netpath._negative[("isdir", "\\\\down\\x")] = \
+                    time.monotonic() + 300.0
+            got = netpath._call_with_timeout(_spy, "\\\\down\\x", 1.0, False,
+                                             "isdir")
+            assert got is False
+            assert calls == [], "期限内の否定キャッシュなのに OS を叩いた"
+        finally:
+            netpath.clear_cache()
+
+    def test_expired_entry_for_queried_key_is_requeried(self):
+        """自分のキーが期限切れなら、掃除に吸収されても引き直される。"""
+        import time
+        from app import netpath
+        netpath.clear_cache()
+        calls = []
+
+        def _spy(arg):
+            calls.append(arg)
+            raise OSError("unreachable")
+
+        try:
+            with netpath._lock:
+                netpath._negative[("isdir", "\\\\stale\\y")] = \
+                    time.monotonic() - 1.0
+            got = netpath._call_with_timeout(_spy, "\\\\stale\\y", 1.0, False,
+                                             "isdir")
+            assert got is False
+            assert calls == ["\\\\stale\\y"], (
+                f"期限切れなのに引き直していない: {calls}")
+        finally:
+            netpath.clear_cache()
+
+
 # ---- Phase 2.1 バグ修正（B2: 読み込みバー残存） ----
 class TestLoadingBarResidue:
     def test_mismatch_completion_clears_bar_and_keeps_p1(

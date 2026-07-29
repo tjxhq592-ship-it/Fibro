@@ -95,11 +95,15 @@ def _call_with_timeout(func: Callable[[str], Any], arg: str,
     """
     key = (kind, arg)
     with _lock:
-        expiry = _negative.get(key)
-        if expiry is not None:
-            if expiry > time.monotonic():
-                return default
-            del _negative[key]
+        # 期限切れは自分のキーだけでなくまとめて捨てる。以前は「引き直した
+        # キーだけ」消していたので、二度と問い合わせないパス（消したお気に
+        # 入り・抜いた USB）の分が寿命を過ぎても残り続けた。件数は高々
+        # 到達不可パスの数なので掃除は毎回で足りる。
+        now = time.monotonic()
+        for stale in [k for k, exp in _negative.items() if exp <= now]:
+            del _negative[stale]
+        if key in _negative:
+            return default     # 期限内の否定結果。OS には問い合わせない
         call = _inflight.get(key)
         spawn = call is None
         if spawn:
