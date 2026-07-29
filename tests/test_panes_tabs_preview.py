@@ -28,6 +28,31 @@ def _make_window(tmp_path, monkeypatch):
     return MainWindow()
 
 
+def _capture_popup(monkeypatch, show_menu):
+    """トップバーのボタンが組み立てるポップアップメニューを取り出す。
+
+    `QMenu.exec` はクラス属性の差し替えが効かない。Shiboken がインスタンス
+    参照で C++ の built-in を返すため、conftest のモーダル抑止をすり抜けて
+    ネストしたイベントループに入ったまま返らない（＝テストがハングする）。
+    継承で潰したものを main_window の名前空間へ差し込んで回避する。
+    """
+    import app.gui.main_window as mw
+    captured = []
+
+    class _CapturingMenu(mw.QMenu):
+        def exec(self, *a, **k):  # noqa: A003 — Qt API
+            captured.append(self)
+            return None
+
+        def exec_(self, *a, **k):
+            return self.exec(*a, **k)
+
+    monkeypatch.setattr(mw, "QMenu", _CapturingMenu)
+    show_menu()
+    assert captured, "ポップアップメニューが exec されなかった"
+    return captured[-1]
+
+
 class TestColumnSorting:
     def _wait_rows(self, qapp, model, root_index, n, limit=400):
         import time
@@ -308,20 +333,30 @@ class TestCombinedContextMenu:
     def test_build_combined_items(self, qapp, tmp_path, monkeypatch):
         """統合メニューに足す Fibro 項目は「お気に入りに追加」のみ。
 
-        フォルダ選択時のみ fav を返し、ファイルのみなら空。
+        対象はフォルダ・ファイルどちらも（18c4169 でフォルダ限定から拡張）。
+        登録先は選択の先頭。
         """
+        from app.i18n import _
         win = _make_window(tmp_path, monkeypatch)
         f = tmp_path / "a.txt"
         f.write_text("x")
         d = tmp_path / "sub"
         d.mkdir()
-        # ファイルのみ: Fibro 項目なし
-        items, callables = win._build_combined_items([str(f)])
+        for target in (f, d):
+            items, callables = win._build_combined_items([str(target)])
+            actions = [n for n in items if n.get("type") == "action"]
+            assert {n["key"] for n in actions} == {"fav"}
+            assert [n["label"] for n in actions] == [_("ctx_add_fav")]
+            # 登録先が「選択の先頭」であることまで見る（キーの有無だけだと
+            # 対象を取り違えても気づけない）
+            registered = []
+            monkeypatch.setattr(win.favorites, "add_favorite",
+                                lambda p: registered.append(p))
+            callables["fav"]()
+            assert registered == [str(target)]
+        # 選択なし: Fibro 項目なし
+        items, callables = win._build_combined_items([])
         assert items == [] and callables == {}
-        # フォルダ選択: fav のみ
-        items, callables = win._build_combined_items([str(d)])
-        keys = {n.get("key") for n in items if n.get("type") == "action"}
-        assert keys == {"fav"} and "fav" in callables
 
     def test_combined_key_runs_action(self, qapp, tmp_path, monkeypatch):
         """show_combined_menu が key を返したら対応アクションが呼ばれる。"""
@@ -401,21 +436,50 @@ class TestToolbarRemovalAndShortcuts:
         popup.close()
 
     def test_theme_toggle_in_settings_menu(self, qapp, tmp_path, monkeypatch):
-        from PySide6.QtWidgets import QMenu
+        """設定（歯車）にテーマ選択サブメニューがある。
+
+        ff2ed7e でメニューバーは全廃され、設定はトップバーの歯車ボタンへ
+        移った。実体はトグルではなく全テーマの排他チェック式ピッカーだが、
+        受け入れ確認の対応を崩さないためテスト名は据え置く。
+        """
+        from app.gui.theme import THEME_META, THEME_ORDER
+        from app.i18n import _
         win = _make_window(tmp_path, monkeypatch)
-        labels = [a.text() for m in win.menuBar().findChildren(QMenu)
-                  for a in m.actions()]
-        assert any("テーマ" in t for t in labels)
+        assert hasattr(win, "settings_btn")
+        menu = _capture_popup(monkeypatch, win._show_settings_menu)
+
+        theme_action = next(
+            (a for a in menu.actions() if a.text() == _("menu_theme")), None)
+        assert theme_action is not None, \
+            f"テーマ項目が無い: {[a.text() for a in menu.actions()]}"
+        submenu = theme_action.menu()
+        assert submenu is not None, "テーマがサブメニューになっていない"
+
+        # 全テーマが THEME_ORDER の順で並ぶ
+        lang = win.theme_manager.get("language", "ja")
+        label_key = "label_ja" if lang == "ja" else "label_en"
+        expected = [THEME_META[k][label_key] for k in THEME_ORDER]
+        assert [a.text() for a in submenu.actions()] == expected
+
+        # 現在テーマだけが排他チェックされている
+        current = win.project_settings.get("theme", "light")
+        checked = [a.text() for a in submenu.actions() if a.isChecked()]
+        assert checked == [THEME_META[current][label_key]]
+        assert all(a.isCheckable() for a in submenu.actions())
 
     def test_help_menu_present(self, qapp, tmp_path, monkeypatch):
-        """ヘルプメニューにバグ報告と About がある。"""
-        from PySide6.QtWidgets import QMenu
+        """ヘルプメニューにバグ報告と About がある。
+
+        ff2ed7e 以降、メニューバーではなくトップバーの ? ボタンから出る。
+        """
+        from app.i18n import _
         win = _make_window(tmp_path, monkeypatch)
-        menus = {m.title(): m for m in win.menuBar().findChildren(QMenu)}
-        assert "ヘルプ" in menus
-        labels = [a.text() for a in menus["ヘルプ"].actions()]
-        assert any("バグ" in t for t in labels)
-        assert any("について" in t for t in labels)
+        assert hasattr(win, "help_btn")
+        menu = _capture_popup(monkeypatch, win._show_help_menu)
+        # ラベル直書きだと i18n を変えた時にテストだけ生き残るため、
+        # プロダクションと同じキーから引いて突き合わせる。
+        labels = [a.text() for a in menu.actions() if not a.isSeparator()]
+        assert labels == [_("menu_report_bug"), _("menu_about")]
 
     def test_issues_url_and_version(self, qapp, tmp_path, monkeypatch):
         """バグ報告 URL とバージョン定数が想定どおり。"""
