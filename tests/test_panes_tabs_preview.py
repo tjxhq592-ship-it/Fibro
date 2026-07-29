@@ -412,6 +412,38 @@ class TestToolbarRemovalAndShortcuts:
         assert not hasattr(win, "fwd_btn")
         assert not hasattr(win, "up_btn")
 
+    def test_ctrl_tab_survives_close_and_reshow(self, qapp, tmp_path,
+                                                monkeypatch):
+        """close() → show() の後も Ctrl+Tab がアプリ全体フィルタ経由で効く。
+
+        closeEvent はアプリ全体のイベントフィルタを外す。showEvent で張り直さ
+        ないと、再表示後は QApplication に届いた Ctrl+Tab を誰も捕まえず、
+        エラーも出さずに黙って効かなくなる。既存の test_ctrl_tab_switches_tabs
+        は eventFilter を直接呼ぶので「張られているか」は見ておらず、ここだけが
+        設置を検証する。showEvent を消すとこのテストが落ちること。
+        """
+        from PySide6.QtCore import QEvent, Qt
+        from PySide6.QtGui import QKeyEvent
+        a, b = tmp_path / "reshow1", tmp_path / "reshow2"
+        a.mkdir()
+        b.mkdir()
+        win = _make_window(tmp_path, monkeypatch)
+        win.navigate(str(a))
+        win.new_tab(str(b))
+        assert win.tab_bar.count() == 2
+
+        win.close()     # ここでアプリ全体のフィルタが外れる
+        win.show()      # handle_remote_open と同じ経路（非表示なら show）
+        start = win.tab_bar.currentIndex()
+
+        # 宛先はペイン内のウィジェット。アプリ全体フィルタは
+        # QCoreApplication::notify を通るので、宛先が win でなくても発火する。
+        ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Tab,
+                       Qt.KeyboardModifier.ControlModifier)
+        qapp.sendEvent(win.table, ev)
+        assert win.tab_bar.currentIndex() == (start + 1) % 2, \
+            "再表示後に Ctrl+Tab がタブを切り替えていない（フィルタ未設置）"
+
     def test_nav_shortcuts_present(self, qapp, tmp_path, monkeypatch):
         win = _make_window(tmp_path, monkeypatch)
         seqs = {a.shortcut().toString() for a in win.actions()}

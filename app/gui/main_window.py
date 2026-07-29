@@ -2547,6 +2547,22 @@ class MainWindow(QMainWindow):
         state = self._current_primary().header.saveState()
         self.theme_manager.set("columns", state.toBase64().data().decode())
 
+    def showEvent(self, event) -> None:  # noqa: N802 — Qt API
+        """再表示のたびにアプリ全体のイベントフィルタを張り直す。
+
+        closeEvent でフィルタを外すため、閉じた後に再び表示すると
+        Ctrl+Tab / Ctrl+Shift+Tab がエラーも出さずに効かなくなる
+        （handle_remote_open は非表示なら show() する）。今は閉じれば
+        プロセスも終わるので到達しないが、トレイ常駐・複数ウィンドウなど
+        「閉じても常駐する」選択肢を入れた瞬間に壊れ、壊れ方が静かなので
+        1 行で先に塞いでおく。installEventFilter は同一オブジェクトの
+        既存エントリを取り除いてから積み直すので、重ね掛けにはならない。
+        """
+        super().showEvent(event)
+        app = QApplication.instance()
+        if app:
+            app.installEventFilter(self)
+
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt API
         # 走行中のワーカーからの通知を止める（結果は破棄されるウィンドウ宛）。
         self._jobs.stop_all()
