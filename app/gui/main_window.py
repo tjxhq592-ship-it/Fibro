@@ -379,6 +379,31 @@ class _PathValidateJob(StoppableJob):
             self.finished = True
 
 
+class _NavReachJob(StoppableJob):
+    """移動先ネットワークパスの到達性をバックグラウンドで確かめる。
+
+    _PathValidateJob（復元タブ用）と分けてあるのは待ち方が違うため。あちらは
+    「起動時に開いていたタブを諦めずに開き直す」のが目的なので上限なしの
+    is_dir で待つ。こちらは利用者が今まさに入力した先なので、返らないなら
+    2 秒で見切って知らせる（netpath.reachable の既定）。お気に入りの到達性
+    表示・空き容量取得と同じ土俵に揃えてある。
+
+    emit(gen, path, reachable) で返す。
+    """
+
+    def __init__(self, path: str, gen: int, emit) -> None:
+        super().__init__(emit)
+        self._path = path
+        self._gen = gen
+
+    def run(self) -> None:
+        from app.netpath import reachable
+        try:
+            self._notify(self._gen, self._path, reachable(self._path))
+        finally:
+            self.finished = True
+
+
 class MainWindow(QMainWindow):
     # 選択サイズ合計の非同期計算結果（gen, 合計バイト）
     _size_computed = Signal(int, int)
@@ -388,6 +413,8 @@ class MainWindow(QMainWindow):
     _disk_usage_ready = Signal(int, object)
     # 復元タブのネットワークパス実在確認の結果（pane, path, is_valid）
     _tab_path_validated = Signal(object, str, bool)
+    # 移動先ネットワークパスの到達性確認の結果（gen, path, reachable）
+    _nav_reach_checked = Signal(int, str, bool)
 
     def __init__(self) -> None:
         super().__init__()
@@ -404,6 +431,9 @@ class MainWindow(QMainWindow):
         self._disk_path = ""         # 直近に空き容量を要求したパス
         self._disk_usage_ready.connect(self._apply_disk_usage)
         self._tab_path_validated.connect(self._on_tab_path_validated)
+        self._nav_gen = 0            # 移動先到達性チェックの世代
+        self._nav_from = ""          # 到達不可だった時の戻り先
+        self._nav_reach_checked.connect(self._on_nav_reach_checked)
 
         self.rename_executor = RenameExecutor()
         self.file_ops = FileOps()
@@ -896,11 +926,13 @@ class MainWindow(QMainWindow):
                 QThreadPool.globalInstance().start(self._jobs.track(
                     _PathValidateJob(path, pane,
                                      self._tab_path_validated.emit)))
-            elif not self.navigate(path):
+            # ここへ来るのはローカルか検証済みネットワーク。どちらも
+            # navigate 側の到達性確認は要らない（B3: 検証は最大1回）。
+            elif not self.navigate(path, verify=False):
                 fallback = self._default_dir()
                 self.tab_bar.setTabText(index, self._tab_title(fallback))
                 self.tab_bar.setTabToolTip(index, fallback)
-                self.navigate(fallback)
+                self.navigate(fallback, verify=False)
             return
         pane = self._tabs[index]
         self.primary_stack.setCurrentWidget(pane)
@@ -1378,19 +1410,28 @@ class MainWindow(QMainWindow):
     def current_path(self) -> str:
         return str(Path(self.list_model.rootPath()))
 
-    def navigate(self, path: str, record: bool = True) -> bool:
+    def navigate(self, path: str, record: bool = True,
+                 verify: bool = True) -> bool:
         """path へ移動する。成功で True、無効なパス（非ディレクトリ）で False。
 
         戻り値は復元タブの妥当性判定（_on_tab_changed）で使う。既存の呼び出し
         側は戻り値を無視しても従来どおり動作する。
+
+        verify=False はネットワークパスの到達性確認を省く。確認済みの結果を
+        受けて移動する場合（_on_tab_path_validated / _on_nav_reach_checked）に
+        使い、確認の無限往復を止める。
         """
         path = str(Path(path))
+        came_from = self.current_path
         # D2-1(方針B)/B1: is_dir の事前チェックはローカルパスのみ同期で行う。
         # ネットワークパス（UNC もリモート割り当てドライブ Z: 等も）は切断時に
         # is_dir が数秒ブロックしうるため、事前チェックを省いて
-        # QFileSystemModel.setRootPath に委ねる（無効でも即座に返り空表示になる）。
+        # QFileSystemModel.setRootPath に委ねる。
         # ローカル無効パスは従来どおり False を返しフォールバックできる。ネットワークは
         # 楽観的に True を返す（復元タブの実在検証は _on_tab_changed でワーカー化）。
+        # ただし setRootPath は無効パスでも黙って失敗し、rootIndex が無効になって
+        # 一覧がドライブ一覧に化ける（空表示にはならない）。利用者には移動できた
+        # ように見えてしまうので、到達性は末尾で後追い確認する（verify）。
         if not _is_network_path(path) and not Path(path).is_dir():
             return False
         if record:
@@ -1433,7 +1474,41 @@ class MainWindow(QMainWindow):
         self._update_selection_status()
         self._update_disk_usage(path)
         self._update_tab_title(self._active_pane)
+        # 世代は移動のたびに進める。ネットワークの時だけ進めると、確認中に
+        # ローカルへ移った利用者を古い結果が引き戻してしまう。
+        self._nav_gen += 1
+        if verify and _is_network_path(path):
+            # 上で事前チェックを省いたぶん、到達可能かは後追いで確かめる。
+            # 省いたまま黙っていると、切断先へ移動しても何も起きない（一覧は
+            # ルートが無効になりドライブ一覧に化ける）。
+            self._nav_from = came_from
+            QThreadPool.globalInstance().start(self._jobs.track(
+                _NavReachJob(path, self._nav_gen,
+                             self._nav_reach_checked.emit)))
         return True
+
+    def _on_nav_reach_checked(self, gen: int, path: str, ok: bool) -> None:
+        """移動先の到達性確認の結果を反映する（ワーカーからの非同期通知）。
+
+        到達不可なら知らせて、移動前の場所へ戻す。戻さないと、パンくずは
+        移動先を指しているのに一覧はドライブ一覧という食い違った状態が残る。
+        戻りは履歴に積まない（利用者が行っていない場所なので）。
+
+        確認の間に利用者が別の場所へ移っていたら黙って捨てる（世代で判定）。
+        """
+        if gen != self._nav_gen or ok:
+            return
+        back = self._nav_from
+        self._nav_from = ""
+        # 直前の移動を履歴から取り消す。行けなかった場所を「戻る」で
+        # 踏み直せてしまうため。
+        if self._history and self._history[self._history_pos] == path:
+            del self._history[self._history_pos]
+            self._history_pos = max(0, self._history_pos - 1)
+        if back and back != path:
+            self.navigate(back, record=False, verify=False)
+        QMessageBox.warning(self, _("fav_unreachable_title"),
+                            _("fav_unreachable_msg").format(path=path))
 
     def _sync_tree_to_path(self) -> None:
         """ツリーの選択・展開を最新の保留パスに同期する（navigate から遅延実行）。
@@ -1468,7 +1543,7 @@ class MainWindow(QMainWindow):
             self.tab_bar.setTabText(idx, self._tab_title(target))
             self.tab_bar.setTabToolTip(idx, target)
         if pane is self._active_pane:
-            self.navigate(target)
+            self.navigate(target, verify=False)   # 検証はいま済ませた
         else:
             # 検証済みの確定パスとして pending に戻す。次回選択時は再検証せず
             # 直接 navigate される（B3: ネットワーク検証は1タブ最大1回）。

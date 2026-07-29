@@ -3,6 +3,7 @@
 GUI 部分は offscreen でスモーク、プレビュー分類は純粋テスト。
 """
 import os
+from pathlib import Path
 
 import pytest
 
@@ -963,6 +964,160 @@ class TestNetworkTabValidationOnce:
         win.close_tab(1)
         assert 1 in win._pending_paths
         assert win._pending_paths[1] == (str(c), True)
+
+
+# ---- W6: 到達できないネットワークパスへ移動したら知らせる ----
+class TestNavigateUnreachableNetwork:
+    """navigate() は楽観的に True を返すが、後追いで到達性を確かめる。
+
+    事前 is_dir を省いた（B1/D2-1 方針B）代償として、切断先へ移動しても
+    「何も起きない」状態になっていた。実機確認（W6 項目2）では、パンくずは
+    移動先を指すのに一覧は無効ルートでドライブ一覧に化け、エラーも status も
+    出なかった。ここはその後追い確認を固定する。
+    """
+
+    def _fake_job(self, monkeypatch):
+        """_NavReachJob を非同期スタブ化する（実 OS 呼び出しを打たない）。
+
+        併せて netpath も潰す。空き容量取得（_DiskUsageJob →
+        safe_disk_usage）が本物の OS 呼び出しに入るため。
+        """
+        import app.gui.main_window as mw
+        import app.netpath as netpath
+        monkeypatch.setattr(netpath, "safe_disk_usage",
+                            lambda path, timeout=2.0: None)
+        monkeypatch.setattr(netpath, "reachable",
+                            lambda path, timeout=2.0, require_dir=True: False)
+        holder: dict = {}
+
+        class FakeJob(mw.StoppableJob):
+            def __init__(self, path, gen, emit):
+                super().__init__(emit)
+                holder.setdefault("starts", []).append(path)
+                holder["gen"] = gen
+                holder["emit"] = emit
+
+            def run(self):
+                self.finished = True
+
+        monkeypatch.setattr(mw, "_NavReachJob", FakeJob)
+        holder.setdefault("starts", [])
+        return holder
+
+    def _as_network(self, monkeypatch, path):
+        """実在するローカルディレクトリを「ネットワークパス」扱いにする。
+
+        本物の UNC を navigate に渡すと QFileSystemModel.setRootPath が
+        ホスト名解決で数秒ブロックする（GUI スレッド）。ここで見たいのは
+        移動後の到達性確認の配線であって UNC の判定ではない。判定そのものは
+        TestNetworkPathDetection / TestMappedNetworkDrive が受け持つ。
+        """
+        import app.gui.main_window as mw
+        target = str(Path(path))
+        monkeypatch.setattr(mw, "_is_network_path",
+                            lambda p: str(Path(p)) == target)
+        return target
+
+    def test_local_path_starts_no_check(self, qapp, tmp_path, monkeypatch):
+        """ローカルパスでは到達性チェックを起こさない（同期 is_dir で足りる）。"""
+        job = self._fake_job(monkeypatch)
+        d = tmp_path / "local"
+        d.mkdir()
+        win = _make_window(tmp_path, monkeypatch)
+        assert win.navigate(str(d)) is True
+        assert job["starts"] == []
+
+    def test_network_path_starts_check(self, qapp, tmp_path, monkeypatch):
+        job = self._fake_job(monkeypatch)
+        share = tmp_path / "share"
+        share.mkdir()
+        target = self._as_network(monkeypatch, share)
+        win = _make_window(tmp_path, monkeypatch)
+        assert win.navigate(target) is True          # 楽観的に True（仕様）
+        assert job["starts"] == [target]
+
+    def test_unreachable_warns_and_returns(self, qapp, tmp_path, monkeypatch):
+        """到達不可なら警告を出し、移動前の場所へ戻す。"""
+        import app.gui.main_window as mw
+        job = self._fake_job(monkeypatch)
+        home, share = tmp_path / "home", tmp_path / "share"
+        home.mkdir()
+        share.mkdir()
+        target = self._as_network(monkeypatch, share)
+        win = _make_window(tmp_path, monkeypatch)
+        win.navigate(str(home))
+
+        warned: list[tuple] = []
+        monkeypatch.setattr(mw.QMessageBox, "warning",
+                            lambda *a, **k: warned.append(a))
+
+        win.navigate(target)
+        assert win._history[win._history_pos] == target
+        job["emit"](job["gen"], target, False)
+
+        assert win.current_path == str(home)
+        assert len(warned) == 1
+        assert target in warned[0][2]
+        # 行けなかった場所は履歴に残さない（「戻る」で踏み直せてしまう）
+        assert target not in win._history
+
+    def test_reachable_stays_and_is_silent(self, qapp, tmp_path, monkeypatch):
+        """到達できたなら何もしない（移動先に留まり、警告も出さない）。"""
+        import app.gui.main_window as mw
+        job = self._fake_job(monkeypatch)
+        share = tmp_path / "share"
+        share.mkdir()
+        target = self._as_network(monkeypatch, share)
+        win = _make_window(tmp_path, monkeypatch)
+
+        warned: list = []
+        monkeypatch.setattr(mw.QMessageBox, "warning",
+                            lambda *a, **k: warned.append(a))
+        win.navigate(target)
+        job["emit"](job["gen"], target, True)
+
+        assert win.current_path == target
+        assert warned == []
+
+    def test_stale_result_is_ignored(self, qapp, tmp_path, monkeypatch):
+        """確認中に別の場所へ移っていたら、古い結果では戻さない。"""
+        import app.gui.main_window as mw
+        job = self._fake_job(monkeypatch)
+        home, other, share = tmp_path / "h", tmp_path / "o", tmp_path / "s"
+        for d in (home, other, share):
+            d.mkdir()
+        target = self._as_network(monkeypatch, share)
+        win = _make_window(tmp_path, monkeypatch)
+        win.navigate(str(home))
+
+        warned: list = []
+        monkeypatch.setattr(mw.QMessageBox, "warning",
+                            lambda *a, **k: warned.append(a))
+
+        win.navigate(target)
+        stale_gen = job["gen"]
+        win.navigate(str(other))          # 利用者が先に別の場所へ移った
+        job["emit"](stale_gen, target, False)
+
+        assert win.current_path == str(other)
+        assert warned == []
+
+    def test_validated_tab_does_not_recheck(self, qapp, tmp_path, monkeypatch):
+        """検証済みタブの navigate では再確認しない（B3: 検証は最大1回）。"""
+        job = self._fake_job(monkeypatch)
+        share = tmp_path / "share"
+        share.mkdir()
+        target = self._as_network(monkeypatch, share)
+        win = _make_window(tmp_path, monkeypatch)
+        win.navigate(str(tmp_path))
+        win.new_tab(str(tmp_path))
+        # new_tab は追加したタブを選択済みなので、一度離れてから戻さないと
+        # _on_tab_changed が走らない（同じ index への設定は無視される）。
+        win.tab_bar.setCurrentIndex(0)
+        win._pending_paths[1] = (target, True)   # 検証済みの確定値
+        win.tab_bar.setCurrentIndex(1)
+        assert win.current_path == target        # 移動はする
+        assert job["starts"] == []               # が、再確認はしない
 
 
 # ---- Phase 2.1 バグ修正（B4: tree 同期 singleShot 集約） ----
