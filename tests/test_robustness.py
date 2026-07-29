@@ -354,3 +354,97 @@ class TestOpenFileNonBlocking:
             lambda p, e: got.append((p, e)))
         job.run()
         assert got and got[0][0].endswith(".json")
+
+
+# ---- モーダルメニューの番人（conftest の _close_popup_menus） ----
+class TestPopupMenuGuard:
+    """開いたままのメニューでハングしないことを保証する。
+
+    QMenu.exec はクラス属性の差し替えが効かない（Shiboken がインスタンス
+    参照で C++ の built-in を返す）。以前 conftest にあった
+    monkeypatch.setattr(QMenu, "exec", ...) は素通りしており、
+    メニューを開くテストはネストしたイベントループでハングしていた。
+    番人が外れたら（あるいはまた効かない方法に戻ったら）ここで気付ける。
+    """
+
+    def test_exec_returns_instead_of_hanging(self, qapp, _close_popup_menus):
+        from PySide6.QtCore import QPoint
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu("guard-probe")
+        menu.addAction("alpha")
+        menu.addAction("beta")
+        # 番人が居なければここで返らない（pytest-timeout で落ちる）。
+        menu.exec(QPoint(0, 0))
+        assert not menu.isVisible()
+        assert any("guard-probe" in c for c in _close_popup_menus), \
+            f"番人がメニューを捕まえていない: {_close_popup_menus}"
+        # 捕獲を検証したので teardown の fail は取り下げる。
+        _close_popup_menus.clear()
+
+
+# ---- サムネイル生成ワーカーの停止（W5: gui/jobs.py への統一） ----
+class TestThumbnailJobStop:
+    """ThumbnailLoader のワーカーが破棄後に emit しないことを確かめる。
+
+    _store_result はワーカースレッドから呼ばれる。以前はその末尾で
+    ready.emit() していたため、ローダーが先に消えているとワーカー側で
+    RuntimeError になった（GUI からは見えない場所で落ちる）。通知は
+    StoppableJob._notify 経由にして、停止要求で黙るようにしてある。
+    """
+
+    def _png(self, tmp_path):
+        from PySide6.QtGui import QImage
+        path = tmp_path / "a.png"
+        img = QImage(8, 8, QImage.Format.Format_RGB32)
+        img.fill(0xFF0000)
+        assert img.save(str(path))
+        return path
+
+    def test_running_job_stores_and_notifies(self, qapp, tmp_path):
+        from app.gui.thumbnails import ThumbnailLoader, _ThumbJob
+        loader = ThumbnailLoader()
+        got = []
+        loader.ready.connect(lambda: got.append(1))
+        key = (str(self._png(tmp_path)), 96)
+        loader._inflight.add(key)
+
+        _ThumbJob(loader, key, loader.ready.emit).run()
+
+        assert got == [1]
+        assert key in loader._images
+        assert key not in loader._inflight
+
+    def test_stopped_job_neither_decodes_nor_notifies(self, qapp, tmp_path):
+        from app.gui.thumbnails import ThumbnailLoader, _ThumbJob
+        loader = ThumbnailLoader()
+        got = []
+        loader.ready.connect(lambda: got.append(1))
+        key = (str(self._png(tmp_path)), 96)
+        loader._inflight.add(key)
+
+        job = _ThumbJob(loader, key, loader.ready.emit)
+        job.request_stop()
+        job.run()
+
+        assert got == []
+        assert key not in loader._images, "結果を残すと停止の意味がない"
+        # 「生成中」の印は外す（残すとそのキーは二度と生成されない）
+        assert key not in loader._inflight
+        assert job.finished, "JobTracker が保持を解放できない"
+
+    def test_loader_destruction_stops_tracked_jobs(self, qapp, tmp_path):
+        """ローダーの破棄で、保持中のワーカーへ停止要求が伝わる。"""
+        from PySide6.QtCore import QEvent
+        from PySide6.QtWidgets import QApplication
+        from app.gui.thumbnails import ThumbnailLoader, _ThumbJob
+        loader = ThumbnailLoader()
+        # start せずに track だけして、破棄との競合を排除して観測する。
+        job = loader._jobs.track(
+            _ThumbJob(loader, ("dummy", 96), loader.ready.emit))
+        assert job._stopped is False
+
+        loader.deleteLater()
+        app = QApplication.instance()
+        app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+        assert job._stopped is True

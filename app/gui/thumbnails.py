@@ -11,10 +11,11 @@ import threading
 from collections import OrderedDict
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, Qt, Signal
+from PySide6.QtCore import QObject, QThreadPool, Qt, Signal
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QStyledItemDelegate
 
+from app.gui.jobs import JobTracker, StoppableJob
 from app.imagetypes import is_image
 
 _MAX_BYTES = 30 * 1024 * 1024  # 30MB 超は生成しない
@@ -81,16 +82,33 @@ def thumbnail(path: str | Path, size: int = _DEFAULT_SIZE):
 _PENDING = object()  # 「生成中」を表すセンチネル
 
 
-class _ThumbJob(QRunnable):
-    def __init__(self, loader: "ThumbnailLoader", key: tuple[str, int]) -> None:
-        super().__init__()
+class _ThumbJob(StoppableJob):
+    """サムネ 1 枚ぶんのデコード（ワーカースレッド）。
+
+    ready の emit はローダーではなくここから行う。破棄済みのローダーへ emit
+    するとワーカースレッド側で RuntimeError になり、GUI から見えない場所で
+    落ちるため（StoppableJob._notify がそれを畳む）。
+    """
+
+    def __init__(self, loader: "ThumbnailLoader", key: tuple[str, int],
+                 emit) -> None:
+        super().__init__(emit)
         self._loader = loader
         self._key = key
 
     def run(self) -> None:  # ワーカースレッド
-        path, size = self._key
-        img = _make_thumbnail_image(path, size)
-        self._loader._store_result(self._key, img)
+        try:
+            if self._stopped:
+                # 受け手が消えている。デコードするだけ無駄なので取りやめ、
+                # 「生成中」の印だけ外す（キャッシュには何も残さない）。
+                self._loader._forget(self._key)
+                return
+            path, size = self._key
+            img = _make_thumbnail_image(path, size)
+            self._loader._store_result(self._key, img)
+            self._notify()
+        finally:
+            self.finished = True
 
 
 class ThumbnailLoader(QObject):
@@ -108,6 +126,9 @@ class ThumbnailLoader(QObject):
         self._images: OrderedDict[tuple[str, int], object] = OrderedDict()
         self._pixmaps: dict[tuple[str, int], object] = {}
         self._inflight: set[tuple[str, int]] = set()
+        # 破棄時に実行中ワーカーの通知を止める。共有ローダー（shared_loader）は
+        # プロセス寿命だが、明示的に生成した個別インスタンスは先に消えうる。
+        self._jobs = JobTracker(self)
 
     def request(self, path: str | Path, size: int = _DEFAULT_SIZE):
         """QPixmap（完成）／None（非画像等）／_PENDING（生成中）を返す。"""
@@ -125,18 +146,27 @@ class ThumbnailLoader(QObject):
             if key in self._inflight:
                 return _PENDING
             self._inflight.add(key)
-        self._pool.start(_ThumbJob(self, key))
+        self._pool.start(
+            self._jobs.track(_ThumbJob(self, key, self.ready.emit)))
         return _PENDING
 
     def _store_result(self, key: tuple[str, int], img) -> None:
-        """ワーカーから結果（QImage|None）を格納し、再描画を促す。"""
+        """ワーカーから結果（QImage|None）を格納する（ワーカースレッド）。
+
+        再描画の通知（ready）は _ThumbJob 側から行う。ここで emit すると
+        停止要求を経由できず、破棄済みのローダーに触れてしまう。
+        """
         with self._lock:
             self._images[key] = img
             self._inflight.discard(key)
             while len(self._images) > self._capacity:
                 old, _ = self._images.popitem(last=False)
                 self._pixmaps.pop(old, None)
-        self.ready.emit()
+
+    def _forget(self, key: tuple[str, int]) -> None:
+        """生成を取りやめたので「生成中」の印だけ外す（結果は残さない）。"""
+        with self._lock:
+            self._inflight.discard(key)
 
 
 _SHARED_LOADER: "ThumbnailLoader | None" = None

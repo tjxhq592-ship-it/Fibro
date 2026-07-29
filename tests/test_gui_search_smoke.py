@@ -25,7 +25,7 @@ def _wait_for(condition, timeout_ms=5000) -> bool:
     loop = QEventLoop()
     elapsed = 0
     while not condition() and elapsed < timeout_ms:
-        QTimer.singleShot(50, loop.quit)
+        QTimer.singleShot(50, loop, loop.quit)
         loop.exec()
         elapsed += 50
     return condition()

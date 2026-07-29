@@ -23,7 +23,7 @@ def qapp():
 
 def _process_events(ms=300):
     loop = QEventLoop()
-    QTimer.singleShot(ms, loop.quit)
+    QTimer.singleShot(ms, loop, loop.quit)
     loop.exec()
 
 

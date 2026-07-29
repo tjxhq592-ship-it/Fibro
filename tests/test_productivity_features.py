@@ -186,7 +186,7 @@ class TestMainWindowFeatures:
         loop = QEventLoop()
         elapsed = 0
         while "空き" not in win.disk_label.text() and elapsed < 5000:
-            QTimer.singleShot(50, loop.quit)
+            QTimer.singleShot(50, loop, loop.quit)
             loop.exec()
             elapsed += 50
         assert "空き" in win.disk_label.text()

@@ -247,11 +247,15 @@ def _block_modal_dialogs(monkeypatch):
     monkeypatch.setattr(QDialog, "exec_", _fail_on_modal("exec_"),
                         raising=False)
 
-    # --- QMenu / QDrag は「何も選ばれなかった」を返す ---
-    monkeypatch.setattr(QMenu, "exec", lambda self, *a, **k: None,
-                        raising=False)
-    monkeypatch.setattr(QMenu, "exec_", lambda self, *a, **k: None,
-                        raising=False)
+    # --- QMenu は差し替えが効かない（_close_popup_menus で塞ぐ） ---
+    # QMenu.exec だけはクラス属性を差し替えても効かない。Shiboken が
+    # インスタンス参照 `m.exec` で C++ の built-in を返すため、
+    # `QMenu.exec is our_func` が True でも呼ばれるのは本物であり、
+    # ネストしたイベントループに入ったまま返らない（＝ハング）。
+    # QDialog / QMessageBox / QFileDialog にこの癖は無い。
+    # 代わりにポップアップを閉じるタイマーで塞ぐ（_close_popup_menus）。
+
+    # --- QDrag は「何も起きなかった」を返す ---
     try:
         from PySide6.QtCore import Qt
         from PySide6.QtGui import QDrag
@@ -266,6 +270,56 @@ def _block_modal_dialogs(monkeypatch):
             lambda self, *a, **k: Qt.DropAction.IgnoreAction, raising=False)
 
     yield
+
+
+@pytest.fixture(autouse=True)
+def _close_popup_menus():
+    """開いてしまった QMenu を閉じ、テストを失敗させる（ハングさせない）。
+
+    `menu.exec(pos)` はメニューを表示してネストしたイベントループへ入る。
+    誰もクリックしないテスト環境では返らず、オフスクリーンでも同じ。
+    `QMenu.exec` はクラス属性の差し替えが効かない（上記参照）ため、外から
+    閉じるしかない。QApplication に紐付けた繰り返しタイマーはネストした
+    ループの中でも回るので、そこで activePopupWidget() を掴んで close() する。
+
+    黙って閉じると「メニューが出ていない」と区別できなくなるので、
+    捕まえた分は teardown で fail させる。テスト側で意図してポップアップを
+    確認したい場合は、対象モジュールの QMenu を継承で差し替えること
+    （tests/test_panes_tabs_preview.py の _capture_popup が実例）。
+
+    この fixture 自身を要求すると捕獲リストが得られる。検証済みのものを
+    clear() すれば teardown の fail を取り下げられる（この番人のテスト用）。
+    """
+    from PySide6.QtCore import QTimer
+    app = QApplication.instance()
+    caught: list[str] = []
+
+    def _sweep() -> None:
+        popup = app.activePopupWidget()
+        # QMenu 以外のポップアップ（コンボボックスのリスト等）は正常な表示
+        # なので触らない。閉じるのはイベントループを止めるメニューだけ。
+        if isinstance(popup, QMenu):
+            title = popup.title() or popup.objectName() or ""
+            actions = [a.text() for a in popup.actions() if not a.isSeparator()]
+            caught.append(f"{title or type(popup).__name__}: {actions}")
+            popup.close()
+
+    timer = QTimer()
+    timer.setInterval(20)
+    timer.timeout.connect(_sweep)
+    timer.start()
+    try:
+        yield caught
+    finally:
+        timer.stop()
+        timer.timeout.disconnect(_sweep)
+    if caught:
+        pytest.fail(
+            "モーダルな QMenu.exec() がテスト中に開かれた（閉じて続行した）。\n"
+            "そのままだとネストしたイベントループでハングする。\n"
+            + "\n".join(f"  - {c}" for c in caught),
+            pytrace=False,
+        )
 
 
 # =============================================================================
