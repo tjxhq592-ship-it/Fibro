@@ -773,6 +773,81 @@ class TestNetworkPathDetection:
         elapsed = time.perf_counter() - t0
         assert elapsed < 0.5  # 実 I/O があれば秒単位に膨れる
 
+    # ---- W4: GetDriveType をモックした種別ごとの回帰 ----
+    # 既存の 4 件は実機のドライブ構成に依存しており、DRIVE_REMOTE の分岐
+    # （＝B1 で足した本体）を一度も通っていない。種別を固定して押さえる。
+
+    @pytest.mark.parametrize("drive_type,label,expected", [
+        (4, "DRIVE_REMOTE", True),
+        (3, "DRIVE_FIXED", False),
+        (1, "DRIVE_NO_ROOT_DIR", False),
+        (2, "DRIVE_REMOVABLE", False),
+        (5, "DRIVE_CDROM", False),
+        (0, "DRIVE_UNKNOWN", False),
+    ])
+    def test_drive_type_decides_network(self, monkeypatch, drive_type, label,
+                                        expected):
+        """割り当てドライブは DRIVE_REMOTE のときだけネットワーク扱い。"""
+        import app.gui.main_window as mw
+        monkeypatch.setattr(mw, "_drive_type", lambda root: drive_type)
+        assert mw._is_network_path("Z:\\folder") is expected, label
+        assert mw._is_network_path("Z:") is expected, label
+
+    def test_drive_type_is_queried_with_drive_root(self, monkeypatch):
+        """GetDriveTypeW にはドライブルート（"Z:\\"）を渡す。
+
+        パス全体を渡すと種別を取り違える（存在しないパスで DRIVE_NO_ROOT_DIR）。
+        """
+        import app.gui.main_window as mw
+        seen = []
+        monkeypatch.setattr(mw, "_drive_type",
+                            lambda root: (seen.append(root), 4)[1])
+        assert mw._is_network_path("Z:\\a\\b\\c.txt") is True
+        assert seen == ["Z:\\"]
+
+    def test_unc_short_circuits_before_drive_type(self, monkeypatch):
+        """UNC は GetDriveType を呼ばずに True（splitdrive に UNC を渡さない）。"""
+        import app.gui.main_window as mw
+
+        def _boom(root):
+            raise AssertionError(f"UNC で _drive_type が呼ばれた: {root!r}")
+
+        monkeypatch.setattr(mw, "_drive_type", _boom)
+        assert mw._is_network_path("\\\\server\\share\\x") is True
+        assert mw._is_network_path("//server/share/x") is True
+
+    def test_drive_type_wraps_getdrivetypew(self, monkeypatch):
+        """_drive_type は GetDriveTypeW の戻り値をそのまま int で返す。"""
+        import sys
+        import app.gui.main_window as mw
+        if sys.platform != "win32":
+            pytest.skip("GetDriveTypeW は Windows 専用（CI は windows-latest）")
+        import ctypes
+        calls = []
+        monkeypatch.setattr(ctypes.windll.kernel32, "GetDriveTypeW",
+                            lambda root: (calls.append(root), 4)[1])
+        mw._drive_type.cache_clear()
+        try:
+            assert mw._drive_type("Z:\\") == 4
+            assert calls == ["Z:\\"]
+            # lru_cache: 2 回目は OS を叩かない
+            assert mw._drive_type("Z:\\") == 4
+            assert len(calls) == 1
+        finally:
+            mw._drive_type.cache_clear()
+
+    def test_non_windows_falls_back_to_unc_only(self, monkeypatch):
+        """非 Windows では windll が無い。UNC 判定だけに落ち、例外を出さない。"""
+        import app.gui.main_window as mw
+        monkeypatch.setattr(mw.sys, "platform", "linux")
+        mw._drive_type.cache_clear()
+        try:
+            assert mw._drive_type("Z:\\") == 0
+            assert mw._is_network_path("Z:\\x") is False
+            assert mw._is_network_path("\\\\srv\\s") is True
+        finally:
+            mw._drive_type.cache_clear()
+
 
 # ---- Phase 2.1 バグ修正（B2: 読み込みバー残存） ----
 class TestLoadingBarResidue:
