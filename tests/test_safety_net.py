@@ -101,6 +101,47 @@ class TestThreadResidueDetection:
             stop.set()
             thread.join(timeout=2)
 
+    def test_non_daemon_thread_is_reported(self):
+        """非デーモンの残留は必ず報告する（プロセス終了を止めるのはこちら）。"""
+        before = {t.ident for t in threading.enumerate()}
+        stop = threading.Event()
+        thread = threading.Thread(target=stop.wait, name="probe-nondaemon",
+                                  daemon=False)
+        thread.start()
+        try:
+            residual = conftest._residual_threads(before)
+            assert any("probe-nondaemon" in entry for entry in residual), (
+                f"非デーモンの残留スレッドが検出されなかった: {residual}")
+            assert any("daemon=False" in entry for entry in residual), (
+                f"デーモン種別が報告に含まれない: {residual}")
+        finally:
+            # 残したまま抜けると autouse の残留ガードが次テストを落とす。
+            stop.set()
+            thread.join(timeout=2)
+
+    def test_thread_pool_worker_is_reported(self):
+        """ThreadPoolExecutor- 名のスレッドも残留として報告する。
+
+        E（プロセス終了ブロック）の原因そのもの。プールのワーカーは非デーモンで、
+        concurrent.futures の atexit フックが全員を join するため、再導入されたら
+        検出できなければならない。_PERSISTENT_THREAD_PREFIXES へ
+        "ThreadPoolExecutor-" を戻すとこのテストが落ちる。
+        """
+        before = {t.ident for t in threading.enumerate()}
+        stop = threading.Event()
+        thread = threading.Thread(target=stop.wait,
+                                  name="ThreadPoolExecutor-0_0", daemon=True)
+        thread.start()
+        try:
+            residual = conftest._residual_threads(before)
+            assert any("ThreadPoolExecutor-0_0" in entry
+                       for entry in residual), (
+                "プールのワーカーが残留検出から除外されている"
+                f"（_PERSISTENT_THREAD_PREFIXES を確認）: {residual}")
+        finally:
+            stop.set()
+            thread.join(timeout=2)
+
     def test_netpath_daemon_thread_is_excluded(self):
         """netpath の使い捨てデーモンスレッドは残留に数えない。
 
