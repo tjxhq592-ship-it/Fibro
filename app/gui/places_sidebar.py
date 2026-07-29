@@ -290,4 +290,11 @@ class PlacesSidebar(QWidget):
         取得はワーカースレッドで行い、完了時に _on_places_loaded がリストを
         作り直し到達性チェックを予約する。
         """
+        # 明示的な更新なので、前回諦めた結果は捨てて必ず問い合わせ直す
+        # （ネットワークを繋ぎ直した直後にグレーのままにしない）。
+        from app.netpath import clear_cache
+        clear_cache()
+        # ドライブの割り当て/解除が起きている可能性があるため種別も引き直す。
+        from app.gui.main_window import _drive_type
+        _drive_type.cache_clear()
         self._start_load()

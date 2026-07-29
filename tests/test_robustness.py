@@ -3,6 +3,8 @@
 ロジックは純粋テスト、GUI は offscreen スモーク。
 """
 import os
+import threading
+import time
 
 import pytest
 
@@ -65,6 +67,162 @@ class TestNetPath:
 
     def test_disk_usage_missing_none(self):
         assert safe_disk_usage("Z:/definitely/missing/xyz", timeout=0.5) is None
+
+
+# ---- 15. ネットワーク問い合わせの抑制（スレッド積み上がり対策） ----
+class _Blocker:
+    """呼ばれた回数を数え、解放されるまで返らないダミーの OS 呼び出し。"""
+
+    def __init__(self, value=True) -> None:
+        self.calls = []
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self._value = value
+
+    def __call__(self, path):
+        self.calls.append(path)
+        self.entered.set()
+        self.release.wait(5.0)
+        return self._value
+
+
+def _wait_until(pred, deadline: float = 3.0) -> bool:
+    end = time.monotonic() + deadline
+    while time.monotonic() < end:
+        if pred():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+class TestNetPathThrottling:
+    """諦めた問い合わせが積み上がらないこと。
+
+    到達不可パスのスレッドは OS のリトライが終わるまで（数十秒）居座る。
+    一覧の更新ごとに件数ぶん立て直すと、切断中のネットワークドライブが
+    1 つあるだけでスレッドが積み上がる。
+    """
+
+    def _fresh(self, monkeypatch, value=True):
+        import app.netpath as netpath
+        blocker = _Blocker(value)
+        monkeypatch.setattr(netpath.os.path, "isdir", blocker)
+        netpath.clear_cache()
+        return netpath, blocker
+
+    def test_inflight_call_is_shared(self, monkeypatch):
+        """飛行中の問い合わせには相乗りし、スレッドを二重に立てない。"""
+        netpath, blocker = self._fresh(monkeypatch)
+        path = "\\\\srv-share\\inflight"
+        assert reachable(path, timeout=0.1) is False
+        assert blocker.entered.wait(1.0)
+        assert len(blocker.calls) == 1
+        # 否定キャッシュを外しても、飛行中である限り呼び直さない
+        netpath.clear_cache()
+        assert reachable(path, timeout=0.1) is False
+        assert len(blocker.calls) == 1
+        assert ("isdir", path) in netpath._inflight
+        blocker.release.set()
+        assert _wait_until(lambda: ("isdir", path) not in netpath._inflight)
+
+    def test_negative_result_is_cached_briefly(self, monkeypatch):
+        """諦めた結果は短時間だけ覚え、飛行中でなくても待ち直さない。
+
+        失敗で終わる呼び出しを使う。成功で終わる呼び出しは
+        test_late_success_drops_negative_cache のとおり記憶を捨てるため。
+        """
+        import app.netpath as netpath
+        calls = []
+        entered = threading.Event()
+        release = threading.Event()
+
+        def failing(path):
+            calls.append(path)
+            entered.set()
+            release.wait(5.0)
+            raise OSError("unreachable")
+
+        monkeypatch.setattr(netpath.os.path, "isdir", failing)
+        netpath.clear_cache()
+        path = "\\\\srv-share\\negative"
+        assert reachable(path, timeout=0.1) is False
+        assert entered.wait(1.0)
+        release.set()
+        assert _wait_until(lambda: ("isdir", path) not in netpath._inflight)
+        assert ("isdir", path) in netpath._negative
+        # 飛行中ではないのに呼び直されない＝キャッシュが効いている
+        t0 = time.monotonic()
+        assert reachable(path, timeout=5.0) is False
+        assert time.monotonic() - t0 < 0.5
+        assert len(calls) == 1
+        # clear_cache() が逃げ道になっている（手動更新用）
+        netpath.clear_cache()
+        assert reachable(path, timeout=1.0) is False
+        assert len(calls) == 2
+
+    def test_late_success_drops_negative_cache(self, monkeypatch):
+        """諦めた後に成功が返ったら、否定キャッシュは捨てる。
+
+        これがないと、たまたま遅かっただけの到達可能パスが TTL のあいだ
+        「到達不可」に固定されてしまう。
+        """
+        netpath, blocker = self._fresh(monkeypatch, value=True)
+        path = "\\\\srv-share\\late"
+        assert reachable(path, timeout=0.05) is False
+        assert blocker.entered.wait(1.0)
+        assert ("isdir", path) in netpath._negative
+        blocker.release.set()
+        assert _wait_until(lambda: ("isdir", path) not in netpath._inflight)
+        assert ("isdir", path) not in netpath._negative
+        assert reachable(path, timeout=1.0) is True
+        assert len(blocker.calls) == 2
+
+    def test_inflight_is_capped(self, monkeypatch):
+        """飛行中が上限に達したら OS 呼び出しを起こさず諦める。"""
+        import app.netpath as netpath
+        blocker = _Blocker()
+        monkeypatch.setattr(netpath.os.path, "isdir", blocker)
+        netpath.clear_cache()
+        filler = {("isdir", f"\\\\srv-share\\f{i}"): netpath._Call()
+                  for i in range(netpath._MAX_INFLIGHT)}
+        with netpath._lock:
+            netpath._inflight.update(filler)
+        try:
+            assert reachable("\\\\srv-share\\overflow", timeout=1.0) is False
+            assert blocker.calls == []
+            # 安全弁は「確かめていない」ので否定キャッシュには載せない
+            assert ("isdir", "\\\\srv-share\\overflow") not in netpath._negative
+        finally:
+            with netpath._lock:
+                for key in filler:
+                    netpath._inflight.pop(key, None)
+
+    def test_abandoned_thread_is_daemon_and_named(self, monkeypatch):
+        """諦めたスレッドはデーモンで、conftest の残留除外名を保つ。
+
+        名前が変わると残留スレッド検査に引っかかり、終了もブロックされる。
+        """
+        netpath, blocker = self._fresh(monkeypatch)
+        assert reachable("\\\\srv-share\\daemon", timeout=0.05) is False
+        assert blocker.entered.wait(1.0)
+        alive = [t for t in threading.enumerate()
+                 if t.name == netpath._TIMEOUT_THREAD_NAME]
+        assert alive and all(t.daemon for t in alive)
+        blocker.release.set()
+
+    def test_kinds_do_not_collide(self, monkeypatch):
+        """require_dir の有無は別の問い合わせとして扱う。
+
+        isdir と exists を同じ鍵にすると、ファイル登録のお気に入りが
+        フォルダ判定の結果を拾ってしまう。
+        """
+        import app.netpath as netpath
+        netpath.clear_cache()
+        monkeypatch.setattr(netpath.os.path, "isdir", lambda p: False)
+        monkeypatch.setattr(netpath.os.path, "exists", lambda p: True)
+        target = "\\\\srv-share\\file.txt"
+        assert reachable(target, require_dir=True) is False
+        assert reachable(target, require_dir=False) is True
 
 
 # ---- 10. 競合解決 resolver ----

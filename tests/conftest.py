@@ -126,6 +126,15 @@ def _isolate_real_environment(monkeypatch, tmp_path_factory):
         monkeypatch.setattr(single_instance, "SERVER_NAME", unique,
                             raising=False)
 
+    # netpath の否定キャッシュはモジュール変数で、放っておくとテストを跨ぐ。
+    # 前のテストが「到達不可」と諦めたパスを次のテストが引き継がないよう毎回捨てる。
+    try:
+        from app import netpath
+    except Exception:  # noqa: BLE001
+        pass
+    else:
+        netpath.clear_cache()
+
     yield config_dir
 
 
