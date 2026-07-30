@@ -360,6 +360,36 @@ class FavoritesSidebar(QWidget):
         if not fav.is_file:
             self._activate(fav, as_file=False)
 
+    def expand_all_groups(self, expanded: bool) -> None:
+        """全グループを一括で開閉し、保存は 1 回にまとめる。
+
+        itemExpanded/itemCollapsed 経由の _set_expanded_state() は 1 件ごとに
+        store.save() を呼ぶため、そのままでは書き込みがグループ数だけ走る。
+        既存の _restoring ゲートで通知を止め、Favorite.expanded の更新と保存は
+        ここで明示的に行う。
+
+        全ノードがメモリ上にある QTreeWidget なので expandAll()/collapseAll()
+        は安全かつ即時。ディスク I/O もネットワークアクセスも発生しない。
+        """
+        self._restoring = True
+        try:
+            if expanded:
+                self.tree.expandAll()
+            else:
+                self.tree.collapseAll()
+        finally:
+            self._restoring = False
+
+        changed = False
+        for fav in self._store.favorites:
+            # グループ以外は expanded を持たない（_set_expanded_state と同じ判定）
+            if not fav.is_group or fav.expanded == expanded:
+                continue
+            fav.expanded = expanded
+            changed = True
+        if changed:
+            self._store.save()
+
     def _on_item_expanded(self, item: QTreeWidgetItem) -> None:
         self._set_expanded_state(item, True)
 

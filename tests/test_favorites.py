@@ -163,3 +163,104 @@ class TestReachability:
         store.add("here", str(tmp_path))
         assert store.find_by_path(str(tmp_path)) is not None
         assert store.find_by_path("C:\\nope") is None
+
+
+class TestBulkExpandCollapse:
+    """一括開閉（見出しのボタンから呼ばれる）。
+
+    肝は保存回数。itemExpanded/itemCollapsed 経由の _set_expanded_state() は
+    1 件ごとに save() を呼ぶので、素直に expandAll() するとグループ数だけ
+    ファイル書き込みが走る。
+    """
+
+    @staticmethod
+    def _sidebar(store):
+        from app.gui.favorites_sidebar import FavoritesSidebar
+        return FavoritesSidebar(store)
+
+    @staticmethod
+    def _tree_groups(sidebar, store):
+        return [sidebar._items_by_id[f.id] for f in store.favorites
+                if f.is_group]
+
+    def _store_with_groups(self, tmp_path, n=4):
+        store = FavoriteStore(tmp_path / "favorites.json")
+        parent = store.add_group("G0")
+        for i in range(1, n):
+            # ネストも混ぜる（一括なので階層の深さに関わらず全部開く）
+            store.add_group(f"G{i}", parent_id=parent.id if i % 2 else "")
+        store.add("leaf", str(tmp_path), parent_id=parent.id)
+        return store
+
+    def test_collapse_all_saves_once(self, qapp, tmp_path, monkeypatch):
+        store = self._store_with_groups(tmp_path)
+        sidebar = self._sidebar(store)
+        calls = []
+        monkeypatch.setattr(store, "save", lambda: calls.append(1))
+
+        sidebar.expand_all_groups(False)
+
+        assert all(not it.isExpanded() for it in self._tree_groups(sidebar, store))
+        assert all(not f.expanded for f in store.favorites if f.is_group)
+        assert len(calls) == 1  # グループ数ぶん走らない
+
+    def test_expand_all_saves_once(self, qapp, tmp_path, monkeypatch):
+        store = self._store_with_groups(tmp_path)
+        sidebar = self._sidebar(store)
+        sidebar.expand_all_groups(False)  # いったん全部畳んでから
+        calls = []
+        monkeypatch.setattr(store, "save", lambda: calls.append(1))
+
+        sidebar.expand_all_groups(True)
+
+        assert all(it.isExpanded() for it in self._tree_groups(sidebar, store))
+        assert all(f.expanded for f in store.favorites if f.is_group)
+        assert len(calls) == 1
+
+    def test_no_change_skips_save(self, qapp, tmp_path, monkeypatch):
+        """すでに全部その状態なら書き込まない（_set_expanded_state と同じ扱い）。"""
+        store = self._store_with_groups(tmp_path)
+        sidebar = self._sidebar(store)
+        calls = []
+        monkeypatch.setattr(store, "save", lambda: calls.append(1))
+        sidebar.expand_all_groups(True)  # 新規グループは既に expanded=True
+        assert calls == []
+
+    def test_persisted_to_disk(self, qapp, tmp_path):
+        """再起動相当で復元できる（グループぶんが永続化されている）。"""
+        config = tmp_path / "favorites.json"
+        store = FavoriteStore(config)
+        g1 = store.add_group("A")
+        g2 = store.add_group("B", parent_id=g1.id)
+        sidebar = self._sidebar(store)
+
+        sidebar.expand_all_groups(False)
+
+        reloaded = FavoriteStore(config)
+        assert {f.id for f in reloaded.favorites} == {g1.id, g2.id}
+        assert all(f.expanded is False for f in reloaded.favorites)
+
+    def test_leaves_are_untouched(self, qapp, tmp_path):
+        """グループでないお気に入りは影響を受けない。"""
+        config = tmp_path / "favorites.json"
+        store = FavoriteStore(config)
+        group = store.add_group("G")
+        leaf = store.add("leaf", str(tmp_path), parent_id=group.id)
+        sidebar = self._sidebar(store)
+        before = json.loads(json.dumps(vars(leaf), default=str))
+
+        sidebar.expand_all_groups(False)
+
+        assert json.loads(json.dumps(vars(leaf), default=str)) == before
+        assert group.expanded is False
+
+    def test_restoring_flag_is_reset(self, qapp, tmp_path):
+        """一括操作のあとも通常のユーザー操作の保存が効く。"""
+        store = self._store_with_groups(tmp_path, n=2)
+        sidebar = self._sidebar(store)
+        sidebar.expand_all_groups(False)
+        assert sidebar._restoring is False
+
+        group = next(f for f in store.favorites if f.is_group)
+        sidebar._items_by_id[group.id].setExpanded(True)  # ユーザー操作相当
+        assert group.expanded is True
