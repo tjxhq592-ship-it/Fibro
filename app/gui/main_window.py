@@ -659,6 +659,13 @@ class MainWindow(QMainWindow):
         self.places_sidebar.path_selected.connect(self.navigate)
         from app.gui.collapsible import CollapsibleSection
         self.fav_section = CollapsibleSection(_("sidebar_fav"), self.favorites)
+        # 一括開閉はお気に入り（全ノードがメモリ上にある QTreeWidget）のみ。
+        # フォルダツリーは QFileSystemModel の遅延ロードなので、同じ見た目の
+        # ボタンでも同じ実装にはできない（expandAll が全ドライブ走査になる）。
+        self.fav_section.add_action("collapse_all", _("collapse_all_tip"),
+                                    lambda: self.favorites.expand_all_groups(False))
+        self.fav_section.add_action("expand_all", _("expand_all_tip"),
+                                    lambda: self.favorites.expand_all_groups(True))
         self.recent_section = CollapsibleSection(_("sidebar_history"), self.recent_sidebar)
         self.places_section = CollapsibleSection(_("sidebar_places"), self.places_sidebar)
         self.tree_section = CollapsibleSection(_("sidebar_tree"), self.tree)

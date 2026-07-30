@@ -1437,3 +1437,76 @@ class TestHeaderIconThemeRefresh:
         section.refresh_icons()
         after = section._header._chevron_label.pixmap().toImage()
         assert after != before
+
+
+# ---- お気に入り見出しの一括開閉ボタン（結線） ----
+class TestFavoritesHeaderActions:
+    @staticmethod
+    def _buttons(section):
+        return [btn for btn, _name in section._header._actions]
+
+    def test_only_favorites_section_has_actions(
+            self, qapp, tmp_path, monkeypatch):
+        """履歴・クラウド・フォルダツリーの見出しにはボタンを出さない。
+
+        フォルダツリーは QFileSystemModel の遅延ロードで、expandAll() が
+        全ドライブの再帰走査になるため同じ実装を載せられない。
+        """
+        win = _make_window(tmp_path, monkeypatch)
+        assert len(self._buttons(win.fav_section)) == 2
+        for section in (win.recent_section, win.places_section,
+                        win.tree_section):
+            assert self._buttons(section) == []
+
+    def test_button_order_is_collapse_then_expand(
+            self, qapp, tmp_path, monkeypatch):
+        """左＝折りたたみ、右＝展開。"""
+        win = _make_window(tmp_path, monkeypatch)
+        names = [name for _btn, name in win.fav_section._header._actions]
+        assert names == ["collapse_all", "expand_all"]
+        row = win.fav_section._header.layout()
+        first, second = self._buttons(win.fav_section)
+        assert row.indexOf(first) < row.indexOf(second)
+
+    def test_buttons_drive_favorites_bulk_toggle(
+            self, qapp, tmp_path, monkeypatch):
+        """押すとお気に入りのグループ階層が一括開閉する。"""
+        win = _make_window(tmp_path, monkeypatch)
+        store = win.favorite_store
+        group = store.add_group("G")
+        store.add("child", str(tmp_path), parent_id=group.id)
+        win.favorites.refresh()
+        item = win.favorites._items_by_id[group.id]
+        collapse_btn, expand_btn = self._buttons(win.fav_section)
+
+        collapse_btn.click()
+        assert item.isExpanded() is False
+        assert group.expanded is False
+
+        expand_btn.click()
+        assert item.isExpanded() is True
+        assert group.expanded is True
+
+    def test_buttons_have_localized_tooltips(
+            self, qapp, tmp_path, monkeypatch):
+        from app.i18n import _ as tr
+        win = _make_window(tmp_path, monkeypatch)
+        collapse_btn, expand_btn = self._buttons(win.fav_section)
+        assert collapse_btn.toolTip() == tr("collapse_all_tip")
+        assert expand_btn.toolTip() == tr("expand_all_tip")
+        assert collapse_btn.accessibleName() == tr("collapse_all_tip")
+        assert expand_btn.accessibleName() == tr("expand_all_tip")
+
+    def test_buttons_fit_within_header_height(
+            self, qapp, tmp_path, monkeypatch):
+        """見出し高（タブ行の実高さに合わせて可変）を超えない。"""
+        win = _make_window(tmp_path, monkeypatch)
+        win._align_section_headers()          # 実際の整列を適用してから測る
+        header_h = win.fav_section._header.height()
+        assert header_h >= 20                 # 整列が効いている
+        for btn in self._buttons(win.fav_section):
+            assert btn.height() <= header_h - 4
+        # set_header_height が受け付ける下限でもはみ出さない
+        win.fav_section.set_header_height(20)
+        for btn in self._buttons(win.fav_section):
+            assert btn.height() <= 20

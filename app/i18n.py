@@ -69,6 +69,8 @@ _STRINGS: dict[str, dict[str, str]] = {
     "sidebar_places":     {"ja": "クラウド / ネットワーク", "en": "Cloud / Network"},
     "sidebar_recent":     {"ja": "最近使った",      "en": "Recently Used"},
     "sidebar_frequent":   {"ja": "よく使う",        "en": "Frequently Used"},
+    "collapse_all_tip":   {"ja": "すべて折りたたむ", "en": "Collapse all"},
+    "expand_all_tip":     {"ja": "すべて展開",      "en": "Expand all"},
 
     # ── ステータスバー ──
     "sel_0":              {"ja": "選択: 0件",        "en": "Selected: 0"},
