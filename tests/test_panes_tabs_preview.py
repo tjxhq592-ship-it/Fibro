@@ -1359,3 +1359,81 @@ class TestHeaderActions:
         second = section.add_action("expand_all", "b", lambda: None)
         row = section._header.layout()
         assert row.indexOf(first) < row.indexOf(second)
+
+
+# ---- テーマ切替時の見出しアイコン追従（既存バグの修正） ----
+class TestHeaderIconThemeRefresh:
+    """_update_chevron は set_collapsed 経由でしか呼ばれず、set_collapsed は
+    同値なら早期 return する。そのためテーマを切り替えてもシェブロンが前の
+    テーマ色のまま残っていた。_refresh_theme_icons で描き直す。
+    """
+
+    @staticmethod
+    def _pixmap_key(label):
+        px = label.pixmap()
+        return px.cacheKey() if not px.isNull() else None
+
+    def test_refresh_icons_regenerates_chevron_and_buttons(self, qapp):
+        from PySide6.QtWidgets import QWidget
+        from app.gui.collapsible import CollapsibleSection
+
+        section = CollapsibleSection("TEST", QWidget())
+        btn = section.add_action("expand_all", "tip", lambda: None)
+        header = section._header
+        before_chevron = self._pixmap_key(header._chevron_label)
+        before_icon = btn.icon().cacheKey()
+
+        section.refresh_icons()
+
+        assert self._pixmap_key(header._chevron_label) != before_chevron
+        assert btn.icon().cacheKey() != before_icon
+
+    def test_refresh_icons_keeps_collapsed_chevron_direction(self, qapp):
+        """折りたたみ中に描き直しても展開向きのシェブロンに戻らない。"""
+        from PySide6.QtWidgets import QWidget
+        from app.gui.collapsible import CollapsibleSection, _chevron_pixmap
+
+        section = CollapsibleSection("TEST", QWidget())
+        section.set_collapsed(True)
+        section.refresh_icons()
+        shown = section._header._chevron_label.pixmap().toImage()
+        assert shown == _chevron_pixmap(collapsed=True).toImage()
+
+    def test_theme_change_refreshes_all_four_sections(
+            self, qapp, tmp_path, monkeypatch):
+        """_refresh_theme_icons が4セクションすべてを描き直す。
+
+        ボタンが付かない履歴・クラウド・フォルダツリーでもシェブロンの色
+        ずれは起きるので、対象に含める。
+        """
+        win = _make_window(tmp_path, monkeypatch)
+        sections = (win.fav_section, win.recent_section,
+                    win.places_section, win.tree_section)
+        called = []
+        for sec in sections:
+            monkeypatch.setattr(sec, "refresh_icons",
+                                lambda s=sec: called.append(s))
+        win._refresh_theme_icons()
+        assert called == list(sections)
+
+    def test_chevron_color_follows_theme(self, qapp, monkeypatch):
+        """テーマのトークン色が変われば描き直しで実際に絵が変わる。
+
+        アプリ全体のスタイルシートを差し替えると session スコープの
+        QApplication を共有する後続テストに影響が残るので、トークンの
+        参照だけを差し替えて確かめる。
+        """
+        from PySide6.QtWidgets import QWidget
+        import app.gui.collapsible as collapsible
+        from app.gui.theme import TOKENS
+
+        section = collapsible.CollapsibleSection("TEST", QWidget())
+        before = section._header._chevron_label.pixmap().toImage()
+
+        other = "dark" if collapsible.current_tokens() is TOKENS["light"] \
+            else "light"
+        monkeypatch.setattr(collapsible, "current_tokens",
+                            lambda: TOKENS[other])
+        section.refresh_icons()
+        after = section._header._chevron_label.pixmap().toImage()
+        assert after != before

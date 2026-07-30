@@ -2399,6 +2399,13 @@ class MainWindow(QMainWindow):
         """テーマ変更後にテーマ色依存の UI（アイコン・サイドバー）を再描画する。"""
         self.favorites.refresh()
         self.recent_sidebar.refresh()
+        # 見出しのシェブロンは _update_chevron が __init__ と set_collapsed から
+        # しか呼ばれず、set_collapsed は同値なら早期 return するため、テーマを
+        # 切り替えても前テーマの色のまま残っていた。ボタンの有無に関わらず
+        # 起きるので、4セクションすべてを描き直す。
+        for section in (self.fav_section, self.recent_section,
+                        self.places_section, self.tree_section):
+            section.refresh_icons()
         self.project_menu_btn.setIcon(material_icon("menu"))
         self.settings_btn.setIcon(material_icon("settings"))
         self.shortcuts_btn.setIcon(material_icon("keyboard_command_key"))
