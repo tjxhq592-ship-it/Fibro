@@ -530,6 +530,28 @@ QSplitter#mainSplitter::handle {{
     background: {t['pressed_bg']};
 }}
 
+/* ---- 見出し右端のアクションボタン（お気に入りの一括開閉など） ---- */
+/* 見出し内に限定して、他のツールボタンへ波及させない。 */
+#collapsibleHeader #headerAction {{
+    background: transparent;
+    border: none;
+    border-radius: 3px;
+    padding: 0;
+}}
+
+#collapsibleHeader #headerAction:hover {{
+    background: {t['elevated']};
+}}
+
+#collapsibleHeader #headerAction:pressed {{
+    background: {t['pressed_bg']};
+}}
+
+/* 折りたたみ中は本体が無いので押せない＝アイコンを薄く見せる */
+#collapsibleHeader #headerAction:disabled {{
+    background: transparent;
+}}
+
 /* ---- スプリッタの仕切り（点線ハンドル廃止→細線） ---- */
 QSplitter::handle {{
     background-color: {t['border']};

@@ -235,8 +235,19 @@ class TestPressedFeedback:
         assert "QPushButton:pressed" in qss
         assert "QTabBar::tab:pressed" in qss
         assert '#collapsibleHeader[pressed="true"]' in qss
+        assert "#collapsibleHeader #headerAction:pressed" in qss
         # pressed_bg が実際に埋め込まれている
         assert TOKENS["light"]["pressed_bg"] in qss
+
+    def test_header_action_rules_are_scoped_to_header(self):
+        """見出しアクションの QSS は #collapsibleHeader 配下に限定する。"""
+        from app.gui.theme import TOKENS, _stylesheet
+        for theme_name, tokens in TOKENS.items():
+            qss = _stylesheet(tokens)
+            for line in qss.splitlines():
+                if "#headerAction" in line:
+                    assert "#collapsibleHeader" in line, (
+                        f"{theme_name}: 見出し外へ波及するセレクタ {line!r}")
 
     def test_header_pressed_property_toggles(self, qapp):
         """collapsibleHeader が押下中のみ pressed プロパティを立てる。"""

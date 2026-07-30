@@ -1275,3 +1275,87 @@ class TestTreeSyncCoalesce:
             qapp.processEvents()
         # ハンドラ実行後はフラグが下りる（再スケジュールされていない）
         assert win._tree_sync_scheduled is False
+
+
+# ---- 見出しバーのアクションボタン（一括開閉ボタンの土台） ----
+class TestHeaderActions:
+    """CollapsibleSection.add_action の振る舞い。
+
+    肝は「ボタンを押してもセクションは開閉しない」こと。QToolButton が子
+    ウィジェットとしてマウスプレスを消費する＝_HeaderBar.mousePressEvent に
+    届かない、という暗黙の前提に乗っているので、ここで固定しておく。
+    """
+
+    @staticmethod
+    def _section():
+        from PySide6.QtWidgets import QWidget
+        from app.gui.collapsible import CollapsibleSection
+        return CollapsibleSection("TEST", QWidget())
+
+    def test_action_click_does_not_toggle_section(self, qapp):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        calls = []
+        section = self._section()
+        section.resize(200, 24)
+        btn = section.add_action("collapse_all", "tip", lambda: calls.append(1))
+        section.show()
+
+        before = section.is_collapsed()
+        QTest.mouseClick(btn, Qt.MouseButton.LeftButton)
+        assert calls == [1]                        # コールバックは1回だけ
+        assert section.is_collapsed() is before    # 開閉状態は変わらない
+
+    def test_header_click_outside_button_still_toggles(self, qapp):
+        """ボタン以外の見出し領域のクリックは従来どおり開閉する。
+
+        T-1 と同じ QTest 経路で叩くことで「ボタンの上か否か」だけが差になる。
+        """
+        from PySide6.QtCore import QPoint, Qt
+        from PySide6.QtTest import QTest
+
+        section = self._section()
+        section.resize(200, 24)
+        btn = section.add_action("collapse_all", "tip", lambda: None)
+        section.show()
+        header = section._header
+
+        before = section.is_collapsed()
+        # タイトル側（ボタンより十分左）を叩く。ボタンの領域と重ならないこと
+        # 自体も確かめておく（レイアウト変更で無意味なクリックにならないよう）。
+        spot = QPoint(5, header.height() // 2)
+        assert not btn.geometry().contains(spot)
+        QTest.mouseClick(header, Qt.MouseButton.LeftButton, pos=spot)
+        assert section.is_collapsed() is not before
+
+    def test_actions_disabled_while_collapsed(self, qapp):
+        section = self._section()
+        btn = section.add_action("expand_all", "tip", lambda: None)
+        assert btn.isEnabled() is True
+        section.set_collapsed(True)
+        assert btn.isEnabled() is False
+        section.set_collapsed(False)
+        assert btn.isEnabled() is True
+
+    def test_action_added_while_collapsed_starts_disabled(self, qapp):
+        """折りたたみ後に足したボタンも無効状態から始まる。"""
+        section = self._section()
+        section.set_collapsed(True)
+        btn = section.add_action("expand_all", "tip", lambda: None)
+        assert btn.isEnabled() is False
+
+    def test_action_has_tooltip_and_accessible_name(self, qapp):
+        """アイコンのみのボタンなので支援技術向けの名前も要る。"""
+        section = self._section()
+        btn = section.add_action("expand_all", "すべて展開", lambda: None)
+        assert btn.toolTip() == "すべて展開"
+        assert btn.accessibleName() == "すべて展開"
+
+    def test_actions_line_up_left_to_right_in_add_order(self, qapp):
+        """追加順に左→右。お気に入りは「折りたたみ→展開」の順で足す。"""
+        section = self._section()
+        first = section.add_action("collapse_all", "a", lambda: None)
+        second = section.add_action("expand_all", "b", lambda: None)
+        row = section._header.layout()
+        assert row.indexOf(first) < row.indexOf(second)

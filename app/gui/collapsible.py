@@ -6,15 +6,22 @@
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QByteArray, Qt, QTimer, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QByteArray, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QSizePolicy,
-    QVBoxLayout, QWidget,
+    QToolButton, QVBoxLayout, QWidget,
 )
 
+from app.gui.icons import material_pixmap
 from app.gui.motion import MOTION, make_animation
 from app.gui.theme import current_tokens
+
+# 見出しバーに載せるアクションボタンの寸法。見出し高（タブ行に合わせて可変）を
+# 超えないよう小さめに固定し、アイコンは material_pixmap で実寸ラスタライズする
+# （QIcon 経由の縮小だと 14px では輪郭がぼやける）。
+_ACTION_BTN_SIZE = 18
+_ACTION_ICON_SIZE = 14
 
 # Qt が縦サイズ無制限に使う番兵値（QWIDGETSIZE_MAX）。
 _QWIDGETSIZE_MAX = (1 << 24) - 1
@@ -69,16 +76,62 @@ class _HeaderBar(QFrame):
 
         row.addWidget(self._chevron_label)
         row.addWidget(self._title, stretch=1)
+        self._row = row
+
+        # 見出し右端に並ぶアクションボタン（(button, icon_name) を保持）。
+        # テーマ切替時に icon_name から再描画するため名前も覚えておく。
+        self._actions: list[tuple[QToolButton, str]] = []
 
         # 初期状態は展開（collapsed=False）
+        self._collapsed = False
         self._update_chevron(collapsed=False)
+
+    def add_action(self, icon_name: str, tooltip: str, on_click) -> QToolButton:
+        """見出し右端にアイコンボタンを足す。押してもセクションは開閉しない。
+
+        QToolButton は子ウィジェットとして自分でマウスプレスを消費するので、
+        _HeaderBar.mousePressEvent には届かない＝追加のイベント制御は不要。
+        ただしこれは暗黙の前提で、将来ヘッダをイベントフィルタ方式などに
+        書き換えた瞬間に静かに壊れるため、回帰テストで固定してある。
+        """
+        btn = QToolButton(self)
+        btn.setObjectName("headerAction")
+        btn.setAutoRaise(True)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setToolTip(tooltip)
+        # アイコンのみのボタンなので、支援技術向けに同じ文言を名前としても持たせる
+        btn.setAccessibleName(tooltip)
+        btn.setFixedSize(_ACTION_BTN_SIZE, _ACTION_BTN_SIZE)
+        btn.setIconSize(QSize(_ACTION_ICON_SIZE, _ACTION_ICON_SIZE))
+        btn.clicked.connect(on_click)
+        # 追加順に左→右へ並ぶ（title が stretch=1 なのでまとめて右端に寄る）
+        self._row.addWidget(btn)
+        self._actions.append((btn, icon_name))
+        self._update_action_icon(btn, icon_name)
+        # 折りたたみ中に足された場合も無効状態を揃える
+        btn.setEnabled(not self._collapsed)
+        return btn
+
+    def _update_action_icon(self, btn: QToolButton, icon_name: str) -> None:
+        """現在テーマのアイコン色でアクションボタンの絵柄を作り直す。"""
+        btn.setIcon(QIcon(material_pixmap(icon_name, _ACTION_ICON_SIZE)))
+
+    def refresh_icons(self) -> None:
+        """シェブロンとアクションボタンを現在テーマの色で描き直す。"""
+        self._update_chevron(self._collapsed)
+        for btn, icon_name in self._actions:
+            self._update_action_icon(btn, icon_name)
 
     def _update_chevron(self, collapsed: bool) -> None:
         """現在テーマのトークン色でシェブロンアイコンを更新する。"""
         self._chevron_label.setPixmap(_chevron_pixmap(collapsed))
 
     def set_collapsed(self, collapsed: bool) -> None:
+        self._collapsed = collapsed
         self._update_chevron(collapsed)
+        # 本体が見えていないのに押せるボタンを残さない
+        for btn, _icon_name in self._actions:
+            btn.setEnabled(not collapsed)
 
     def _set_pressed(self, pressed: bool) -> None:
         """QSS の #collapsibleHeader[pressed="true"] を発火させる。
@@ -120,6 +173,23 @@ class CollapsibleSection(QWidget):
 
         self._collapsed = not collapsed  # 反転させてから set で確実に適用
         self.set_collapsed(collapsed)
+
+    def add_action(self, icon_name: str, tooltip: str, on_click) -> QToolButton:
+        """見出し右端にアイコンボタンを足す（押してもセクションは開閉しない）。
+
+        セクションの中身に依存しない汎用 API にしてあるので、履歴やクラウドの
+        セクションに後から付けることもできる。
+        """
+        return self._header.add_action(icon_name, tooltip, on_click)
+
+    def refresh_icons(self) -> None:
+        """テーマ変更後にシェブロンとアクションボタンを描き直す。
+
+        _update_chevron は __init__ と set_collapsed からしか呼ばれず、
+        set_collapsed は同値なら早期 return するため、テーマを切り替えても
+        シェブロンが前テーマの色のまま残っていた。ここで明示的に描き直す。
+        """
+        self._header.refresh_icons()
 
     def _on_clicked(self) -> None:
         self.set_collapsed(not self._collapsed)
