@@ -66,7 +66,7 @@ class TestThemeManager:
 
 
 class TestThemeTokenIntegrity:
-    """10テーマ全てが同一キー構成を持つことを保証する回帰テスト。"""
+    """全テーマが同一キー構成を持つことを保証する回帰テスト。"""
 
     def test_all_themes_have_same_keys(self):
         from app.gui.theme import TOKENS
@@ -76,7 +76,9 @@ class TestThemeTokenIntegrity:
 
     def test_theme_order_and_tokens_match(self):
         from app.gui.theme import TOKENS, THEME_ORDER
-        assert len(THEME_ORDER) == 10
+        # 件数を直書きせず TOKENS と一致することだけを見る。テーマの増減で
+        # 落ちるのではなく、片方だけ更新した取りこぼしで落ちてほしいため。
+        assert len(THEME_ORDER) == len(set(THEME_ORDER)), "THEME_ORDER に重複がある"
         assert set(THEME_ORDER) == set(TOKENS.keys())
 
     def test_all_themes_have_meta(self):
@@ -101,10 +103,10 @@ class TestThemeTokenIntegrity:
         from PySide6.QtGui import QColor, QPalette
         from app.gui.theme import TOKENS, ThemeManager
         tm = ThemeManager(tmp_path / "settings.json")
-        applied = tm.set_theme(qapp, "nord")
-        assert applied == "nord"
+        applied = tm.set_theme(qapp, "navy")
+        assert applied == "navy"
         color = qapp.palette().color(QPalette.ColorRole.Window)
-        assert color == QColor(TOKENS["nord"]["surface"])
+        assert color == QColor(TOKENS["navy"]["surface"])
         tm.apply(qapp, "light")
 
     def test_set_theme_unknown_returns_light(self, qapp, tmp_path):
@@ -116,8 +118,8 @@ class TestThemeTokenIntegrity:
         from PySide6.QtGui import QColor
         from app.gui.theme import TOKENS, ThemeManager, current_accent
         tm = ThemeManager(tmp_path / "settings.json")
-        tm.set_theme(qapp, "dracula")
-        assert current_accent() == QColor(TOKENS["dracula"]["accent"])
+        tm.set_theme(qapp, "coffee")
+        assert current_accent() == QColor(TOKENS["coffee"]["accent"])
         tm.set_theme(qapp, "light")
         assert current_accent() == QColor(TOKENS["light"]["accent"])
 
@@ -156,19 +158,25 @@ class TestColorThemeImprovement:
         qss = _stylesheet(t)
         assert f"selection-color: {t['on_accent']}" in qss
 
-    def test_monokai_accent_differs_from_status_ok(self):
-        """accent と status_ok の意味論的衝突（同色）が解消されている。"""
+    def test_accent_differs_from_status_ok(self):
+        """accent と status_ok の意味論的衝突（同色）が起きていない。"""
         from app.gui.theme import TOKENS
-        assert TOKENS["monokai"]["accent"] != TOKENS["monokai"]["status_ok"]
+        for name, t in TOKENS.items():
+            assert t["accent"] != t["status_ok"], f"{name}: accent と status_ok が同色"
 
-    def test_one_dark_elevation_order(self):
+    def test_dark_theme_elevation_order(self):
         """ダークの Elevation 原則: app_base < bg < surface < elevated。"""
         from PySide6.QtGui import QColor
-        from app.gui.theme import TOKENS
-        t = TOKENS["one_dark"]
-        levels = [QColor(t[k]).lightness()
-                  for k in ("app_base", "bg", "surface", "elevated")]
-        assert levels == sorted(levels) and len(set(levels)) == len(levels)
+        from app.gui.theme import THEME_META, TOKENS
+        for name, t in TOKENS.items():
+            if not THEME_META[name]["is_dark"]:
+                continue
+            levels = [QColor(t[k]).lightness()
+                      for k in ("app_base", "bg", "surface", "elevated")]
+            assert levels == sorted(levels), f"{name}: 明度が単調増加でない {levels}"
+            # high_contrast は bg が既に純黒なので app_base を下げられない。
+            expected_unique = 3 if name == "high_contrast" else 4
+            assert len(set(levels)) == expected_unique, f"{name}: {levels}"
 
 
 class TestSingleRename:
