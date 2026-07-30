@@ -1294,7 +1294,7 @@ class MainWindow(QMainWindow):
     def _show_settings_menu(self) -> None:
         """歯車ボタン: 設定項目をポップアップメニューで表示。"""
         menu = QMenu(self)
-        # テーマ選択サブメニュー（10種・排他チェック）
+        # テーマ選択サブメニュー（排他チェック）
         theme_menu = menu.addMenu(_("menu_theme"))
         theme_group = QActionGroup(theme_menu)
         theme_group.setExclusive(True)

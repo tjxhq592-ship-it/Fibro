@@ -343,7 +343,7 @@ def report() -> str:
     for a in THEME_ORDER:
         cells = []
         for b in THEME_ORDER:
-            cells.append("—" if a == b
+            cells.append("-" if a == b
                          else f"{delta_e(TOKENS[a]['bg'], TOKENS[b]['bg']):.1f}")
         lines.append(f"| {a} | " + " | ".join(cells) + " |")
 

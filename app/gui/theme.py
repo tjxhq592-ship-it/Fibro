@@ -1,4 +1,4 @@
-"""カラーテーマ（10種）。Fusion + QPalette + QSS で外部依存なし。
+"""カラーテーマ（6種）。Fusion + QPalette + QSS で外部依存なし。
 
 アプリ全般設定（language/initial_dir/view_mode 等）は config/settings.json に
 永続化する。テーマ（"theme" キー）はプロジェクト範囲のため ThemeManager では
@@ -25,31 +25,34 @@ APP_FONT_SIZE_PT = 9
 
 # --- テーマ一覧 -------------------------------------------------------------
 # メニュー表示順。内部キーもこの順序でサブメニューを構築する。
+# 明るい順に並べ、選ぶ側が明暗のどのあたりかを一目で分かるようにする。
 THEME_ORDER: list[str] = [
-    "light", "dark", "nord", "solarized_light", "solarized_dark",
-    "dracula", "gruvbox_dark", "one_dark", "monokai", "high_contrast",
+    "light", "sepia", "dark", "navy", "coffee", "high_contrast",
 ]
 
 # 表示名と明暗分類（OSタイトルバー・アイコン色分岐に使う）
 THEME_META: dict[str, dict] = {
-    "light":           {"label_ja": "ライト",              "label_en": "Light",           "is_dark": False},
-    "dark":            {"label_ja": "ダーク",              "label_en": "Dark",            "is_dark": True},
-    "nord":            {"label_ja": "Nord",                "label_en": "Nord",            "is_dark": True},
-    "solarized_light": {"label_ja": "Solarized ライト",    "label_en": "Solarized Light", "is_dark": False},
-    "solarized_dark":  {"label_ja": "Solarized ダーク",    "label_en": "Solarized Dark",  "is_dark": True},
-    "dracula":         {"label_ja": "Dracula",             "label_en": "Dracula",         "is_dark": True},
-    "gruvbox_dark":    {"label_ja": "Gruvbox ダーク",      "label_en": "Gruvbox Dark",    "is_dark": True},
-    "one_dark":        {"label_ja": "One Dark",            "label_en": "One Dark",        "is_dark": True},
-    "monokai":         {"label_ja": "Monokai",             "label_en": "Monokai",         "is_dark": True},
-    "high_contrast":   {"label_ja": "ハイコントラスト",    "label_en": "High Contrast",   "is_dark": True},
+    "light":         {"label_ja": "ライト",            "label_en": "Light",         "is_dark": False},
+    "sepia":         {"label_ja": "セピア",            "label_en": "Sepia",         "is_dark": False},
+    "dark":          {"label_ja": "ダーク",            "label_en": "Dark",          "is_dark": True},
+    "navy":          {"label_ja": "ネイビー",          "label_en": "Navy",          "is_dark": True},
+    "coffee":        {"label_ja": "コーヒー",          "label_en": "Coffee",        "is_dark": True},
+    "high_contrast": {"label_ja": "ハイコントラスト",  "label_en": "High Contrast", "is_dark": True},
 }
 
 # --- デザイントークン -------------------------------------------------------
-# 3層の明度（bg=最暗 / surface=パネル / elevated=行ストライプ・タブ選択）
+# 3層の明度（bg=一覧の地色 / surface=パネル / elevated=行ストライプ・タブ選択）
 # + border（細線）+ accent。全テーマで同じキー構成。
-# 各配色は公式パレット（Nord / Solarized / Dracula / Gruvbox / One Dark /
-# Monokai）の値を基準に、公式に存在しない中間色（surface/elevated 段差等）は
-# 近傍色から補間した近似値。high_contrast のみアクセシビリティ用の自作配色。
+#
+# 配色は「並べたときに互いに違って見えること」と「3つの面すべてで文字が読める
+# こと」を基準に設計している。文字は bg の上だけでなく行ストライプやカードの
+# 上にも乗るため、コントラストは bg / surface / elevated の3面すべてに対して
+# 満たす必要がある（最も厳しいのはたいてい elevated）。
+# 数値上の裏付けは tools/check_theme_palette.py が機械的に検証する。値を変える
+# ときは pytest tests/test_theme_palette.py を通すこと。
+#
+# status_* の色相（緑/灰/橙/赤）はテーマをまたいで固定する。「赤＝エラー」の
+# 学習を壊さないためで、テーマごとに変えるのは明度と彩度だけ。
 
 
 class ThemeTokens(TypedDict):
@@ -80,182 +83,82 @@ class ThemeTokens(TypedDict):
 
 
 TOKENS: dict[str, ThemeTokens] = {
-    "dark": {
-        "bg": "#16171a",
-        "surface": "#1e2024",
-        "elevated": "#262830",
-
-        "app_base": "#141518",
-        "card": "#1c1d21",
-
-        "border": "#34363d",
-        "border_str": "#3f424a",
-
-        "text": "#e3e5ea",
-        "text_sub": "#a0a4ad",
-        "text_hint": "#70737c",
-        "icon": "#e3e5ea",
-
-        "accent": "#5b9cf6",
-        "on_accent": "#16171a",
-
-        "sel_bg": "rgba(91,156,246,0.28)",
-        "hover_bg": "rgba(255,255,255,0.07)",
-        "pressed_bg": "rgba(255,255,255,0.13)",
-        "overlay_bg": "rgba(28,29,33,0.90)",
-
-        "scrollbar": "#4a4d55",
-
-        "status_ok": "#66bb6a",
-        "status_unchanged": "#9e9e9e",
-        "status_warn": "#ffa726",
-        "status_error": "#ef5350",
-    },
     "light": {
-        "bg": "#ffffff",
-        "surface": "#f5f6f8",
-        "elevated": "#f2f3f5",
-
-        "app_base": "#eceef1",
-        "card": "#ffffff",
-
-        "border": "#e3e5ea",
-        "border_str": "#d0d3da",
-
-        "text": "#1f2329",
-        "text_sub": "#5c616b",
-        "text_hint": "#8b909a",
-        "icon": "#1f2329",
-
-        "accent": "#2f6fe0",
-        "on_accent": "#ffffff",
-
-        "sel_bg": "rgba(47,111,224,0.14)",
-        "hover_bg": "rgba(0,0,0,0.04)",
-        "pressed_bg": "rgba(0,0,0,0.10)",
-        "overlay_bg": "rgba(255,255,255,0.92)",
-
-        "scrollbar": "#c7cad1",
-
-        "status_ok": "#2e7d32",
-        "status_unchanged": "#9e9e9e",
-        "status_warn": "#ef6c00",
-        "status_error": "#c62828",
+        "bg": "#ffffff", "surface": "#f3f4f7", "elevated": "#e9ebef",
+        "app_base": "#e3e5e9", "card": "#f3f4f7",
+        "border": "#d4d6d8", "border_str": "#b7babd",
+        "text": "#1a1c20", "text_sub": "#4a5058", "text_hint": "#6f7680",
+        "icon": "#1a1c20",
+        "accent": "#1f5fd0", "on_accent": "#ffffff",
+        "sel_bg": "#6b85d7", "hover_bg": "#dcdde1", "pressed_bg": "#cbccd0",
+        "overlay_bg": "#e9ebef", "scrollbar": "#989da2",
+        "status_ok": "#00661d", "status_unchanged": "#575757",
+        "status_warn": "#7d4c00", "status_error": "#b2001d",
     },
-    "nord": {
-        "bg": "#2e3440", "surface": "#3b4252", "elevated": "#434c5e",
-        "app_base": "#262a33", "card": "#3b4252",
-        "border": "#434c5e", "border_str": "#4c566a",
-        "text": "#eceff4", "text_sub": "#d8dee9", "text_hint": "#7b88a1",
-        "icon": "#eceff4",
-        "accent": "#88c0d0", "on_accent": "#2e3440",
-        "sel_bg": "rgba(136,192,208,0.28)", "hover_bg": "rgba(255,255,255,0.07)",
-        "pressed_bg": "rgba(255,255,255,0.13)",
-        "overlay_bg": "rgba(59,66,82,0.90)",
-        "scrollbar": "#4c566a",
-        "status_ok": "#a3be8c", "status_unchanged": "#7b88a1",
-        "status_warn": "#d08770", "status_error": "#bf616a",
+    "sepia": {
+        "bg": "#ece0c6", "surface": "#e4d6b6", "elevated": "#dac9a2",
+        "app_base": "#d4c49e", "card": "#e4d6b6",
+        "border": "#c6bba4", "border_str": "#ada28d",
+        "text": "#332c24", "text_sub": "#5c5142", "text_hint": "#756956",
+        "icon": "#332c24",
+        "accent": "#7f4310", "on_accent": "#ffffff",
+        "sel_bg": "#af947b", "hover_bg": "#cdbd98", "pressed_bg": "#beaf8d",
+        "overlay_bg": "#dac9a2", "scrollbar": "#948976",
+        "status_ok": "#004f14", "status_unchanged": "#434343",
+        "status_warn": "#613b00", "status_error": "#8c0014",
     },
-    "solarized_light": {
-        "bg": "#fdf6e3", "surface": "#eee8d5", "elevated": "#e4ddc7",
-        "app_base": "#f5efd9", "card": "#fdf6e3",
-        "border": "#eee8d5", "border_str": "#93a1a1",
-        "text": "#586e75", "text_sub": "#657b83", "text_hint": "#93a1a1",
-        "icon": "#586e75",
-        "accent": "#268bd2", "on_accent": "#fdf6e3",
-        "sel_bg": "rgba(38,139,210,0.14)", "hover_bg": "rgba(0,0,0,0.04)",
-        "pressed_bg": "rgba(0,0,0,0.10)",
-        "overlay_bg": "rgba(253,246,227,0.92)",
-        "scrollbar": "#93a1a1",
-        "status_ok": "#859900", "status_unchanged": "#93a1a1",
-        "status_warn": "#cb4b16", "status_error": "#dc322f",
+    "dark": {
+        "bg": "#141518", "surface": "#202227", "elevated": "#2b2e34",
+        "app_base": "#0e0f12", "card": "#202227",
+        "border": "#2f3137", "border_str": "#43474e",
+        "text": "#e7e9ed", "text_sub": "#a8aeb8", "text_hint": "#7c838f",
+        "icon": "#e7e9ed",
+        "accent": "#6aa8ff", "on_accent": "#000000",
+        "sel_bg": "#40669c", "hover_bg": "#35373c", "pressed_bg": "#404347",
+        "overlay_bg": "#2b2e34", "scrollbar": "#656a74",
+        "status_ok": "#4dc55b", "status_unchanged": "#adadad",
+        "status_warn": "#ef9a19", "status_error": "#fe8c80",
     },
-    "solarized_dark": {
-        "bg": "#002b36", "surface": "#073642", "elevated": "#0a4657",
-        "app_base": "#001e27", "card": "#073642",
-        "border": "#0d4f5c", "border_str": "#586e75",
-        "text": "#93a1a1", "text_sub": "#839496", "text_hint": "#657b83",
-        "icon": "#93a1a1",
-        "accent": "#268bd2", "on_accent": "#fdf6e3",
-        "sel_bg": "rgba(38,139,210,0.28)", "hover_bg": "rgba(255,255,255,0.06)",
-        "pressed_bg": "rgba(255,255,255,0.12)",
-        "overlay_bg": "rgba(7,54,66,0.90)",
-        "scrollbar": "#586e75",
-        "status_ok": "#859900", "status_unchanged": "#657b83",
-        "status_warn": "#cb4b16", "status_error": "#dc322f",
+    "navy": {
+        "bg": "#172a48", "surface": "#20375c", "elevated": "#27406b",
+        "app_base": "#11213a", "card": "#20375c",
+        "border": "#36455f", "border_str": "#4a5a73",
+        "text": "#e2eaf7", "text_sub": "#adbfd9", "text_hint": "#8598b6",
+        "icon": "#e2eaf7",
+        "accent": "#5ec8e0", "on_accent": "#000000",
+        "sel_bg": "#326c82", "hover_bg": "#344970", "pressed_bg": "#425377",
+        "overlay_bg": "#27406b", "scrollbar": "#6d7e99",
+        "status_ok": "#69de72", "status_unchanged": "#c6c6c6",
+        "status_warn": "#ffb964", "status_error": "#feb4aa",
     },
-    "dracula": {
-        "bg": "#282a36", "surface": "#2f313f", "elevated": "#44475a",
-        "app_base": "#21222c", "card": "#282a36",
-        "border": "#383a4a", "border_str": "#44475a",
-        "text": "#f8f8f2", "text_sub": "#a4a8c5", "text_hint": "#6272a4",
-        "icon": "#f8f8f2",
-        "accent": "#bd93f9", "on_accent": "#282a36",
-        "sel_bg": "rgba(189,147,249,0.28)", "hover_bg": "rgba(255,255,255,0.07)",
-        "pressed_bg": "rgba(255,255,255,0.13)",
-        "overlay_bg": "rgba(40,42,54,0.90)",
-        "scrollbar": "#6272a4",
-        "status_ok": "#50fa7b", "status_unchanged": "#6272a4",
-        "status_warn": "#ffb86c", "status_error": "#ff5555",
-    },
-    "gruvbox_dark": {
-        "bg": "#282828", "surface": "#3c3836", "elevated": "#504945",
-        "app_base": "#1d2021", "card": "#3c3836",
-        "border": "#504945", "border_str": "#665c54",
-        "text": "#ebdbb2", "text_sub": "#d5c4a1", "text_hint": "#a89984",
-        "icon": "#ebdbb2",
-        "accent": "#fe8019", "on_accent": "#282828",
-        "sel_bg": "rgba(254,128,25,0.25)", "hover_bg": "rgba(255,255,255,0.06)",
-        "pressed_bg": "rgba(255,255,255,0.12)",
-        "overlay_bg": "rgba(60,56,54,0.90)",
-        "scrollbar": "#7c6f64",
-        "status_ok": "#b8bb26", "status_unchanged": "#928374",
-        "status_warn": "#fabd2f", "status_error": "#fb4934",
-    },
-    # ダークモードの Elevation 原則（前面ほど明るい）に従い bg < surface < elevated。
-    "one_dark": {
-        "bg": "#1e2227", "surface": "#21252b", "elevated": "#282c34",
-        "app_base": "#181a1f", "card": "#1e2227",
-        "border": "#3a3f4b", "border_str": "#4b5263",
-        "text": "#abb2bf", "text_sub": "#828997", "text_hint": "#5c6370",
-        "icon": "#abb2bf",
-        "accent": "#61afef", "on_accent": "#1e2227",
-        "sel_bg": "rgba(97,175,239,0.25)", "hover_bg": "rgba(255,255,255,0.06)",
-        "pressed_bg": "rgba(255,255,255,0.12)",
-        "overlay_bg": "rgba(40,44,52,0.90)",
-        "scrollbar": "#4b5263",
-        "status_ok": "#98c379", "status_unchanged": "#5c6370",
-        "status_warn": "#d19a66", "status_error": "#e06c75",
-    },
-    "monokai": {
-        "bg": "#272822", "surface": "#2d2e27", "elevated": "#3e3d32",
-        "app_base": "#1e1f1c", "card": "#272822",
-        "border": "#3e3d32", "border_str": "#49483e",
-        "text": "#f8f8f2", "text_sub": "#c2c2bf", "text_hint": "#75715e",
-        "icon": "#f8f8f2",
-        # status_ok（緑 #a6e22e）との意味衝突を避け、accent は Monokai のシアン。
-        "accent": "#66d9ef", "on_accent": "#272822",
-        "sel_bg": "rgba(102,217,239,0.22)", "hover_bg": "rgba(255,255,255,0.07)",
-        "pressed_bg": "rgba(255,255,255,0.13)",
-        "overlay_bg": "rgba(39,40,34,0.90)",
-        "scrollbar": "#75715e",
-        "status_ok": "#a6e22e", "status_unchanged": "#75715e",
-        "status_warn": "#fd971f", "status_error": "#f92672",
+    "coffee": {
+        "bg": "#2b2118", "surface": "#372b1f", "elevated": "#423426",
+        "app_base": "#221912", "card": "#372b1f",
+        "border": "#463d32", "border_str": "#5c5245",
+        "text": "#ece2d2", "text_sub": "#b8a892", "text_hint": "#9a8c78",
+        "icon": "#ece2d2",
+        "accent": "#f09339", "on_accent": "#000000",
+        "sel_bg": "#8a5524", "hover_bg": "#4a3d30", "pressed_bg": "#54493d",
+        "overlay_bg": "#423426", "scrollbar": "#807463",
+        "status_ok": "#58cf64", "status_unchanged": "#b8b8b8",
+        "status_warn": "#fba527", "status_error": "#fea093",
     },
     "high_contrast": {
-        "bg": "#000000", "surface": "#0a0a0a", "elevated": "#1a1a1a",
-        "app_base": "#000000", "card": "#0a0a0a",
+        "bg": "#000000", "surface": "#0d0d0d", "elevated": "#1c1c1c",
+        "app_base": "#000000", "card": "#0d0d0d",
+        # 輪郭を最大限見せることがこのテーマの存在理由なので、border だけは
+        # 他テーマの ΔE00 帯（bg から 6〜12 / 12〜20）を外して純白を使う。
         "border": "#ffffff", "border_str": "#ffffff",
-        "text": "#ffffff", "text_sub": "#e0e0e0", "text_hint": "#b0b0b0",
+        "text": "#ffffff", "text_sub": "#e0e0e0", "text_hint": "#bdbdbd",
         "icon": "#ffffff",
         # 黄のアクセント上では黒文字（白抜きだと視認不能）。
         "accent": "#ffff00", "on_accent": "#000000",
-        "sel_bg": "rgba(255,255,0,0.35)", "hover_bg": "rgba(255,255,255,0.15)",
-        "pressed_bg": "rgba(255,255,255,0.30)",
-        "overlay_bg": "rgba(0,0,0,0.92)",
-        "scrollbar": "#ffffff",
-        "status_ok": "#00ff00", "status_unchanged": "#b0b0b0",
-        "status_warn": "#ffaa00", "status_error": "#ff3333",
+        "sel_bg": "#767600", "hover_bg": "#262626", "pressed_bg": "#323232",
+        "overlay_bg": "#1c1c1c", "scrollbar": "#ffffff",
+        # 純赤 #ff0000 は elevated 上で 4.26:1 しかなく基準に届かないため、
+        # 赤の色相を保ったまま明度を上げた値にしている。
+        "status_ok": "#00ff57", "status_unchanged": "#9a9a9a",
+        "status_warn": "#fca000", "status_error": "#fe6a5f",
     },
 }
 
