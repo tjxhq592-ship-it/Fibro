@@ -11,7 +11,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from app.migrations import migrate_default_project_settings  # noqa: E402
+from app.migrations import (  # noqa: E402
+    migrate_default_project_settings,
+    migrate_retired_theme_names,
+)
 from app.models.project import ProjectManager  # noqa: E402
 from app.models.project_settings import ProjectSettingsStore  # noqa: E402
 
@@ -94,6 +97,117 @@ class TestMigration:
         (tmp_path / "settings.json").write_text(
             json.dumps({"language": "en"}), encoding="utf-8")
         migrate_default_project_settings(tmp_path)
+        assert not (tmp_path / "default_project_settings.json").exists()
+
+
+# ---- 2-2b. 廃止テーマ名のマイグレーション ----
+class TestRetiredThemeMigration:
+    """10テーマ -> 6テーマ整理で消えたテーマ名の読み替え。
+
+    theme.py は未知のテーマ名を light へ落とすため、これが効かないと
+    ダークテーマ利用者が更新後に真っ白な画面になる。
+    """
+
+    RETIRED = {
+        "nord": "navy",
+        "solarized_dark": "navy",
+        "one_dark": "dark",
+        "dracula": "dark",
+        "gruvbox_dark": "coffee",
+        "monokai": "coffee",
+        "solarized_light": "sepia",
+    }
+
+    def _write(self, path, theme):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"theme": theme, "tabs": ["C:\\"]}),
+                        encoding="utf-8")
+
+    def _theme(self, path):
+        return json.loads(path.read_text("utf-8"))["theme"]
+
+    @pytest.mark.parametrize("old,new", sorted(RETIRED.items()))
+    def test_default_project_is_remapped(self, tmp_path, old, new):
+        path = tmp_path / "default_project_settings.json"
+        self._write(path, old)
+        migrate_retired_theme_names(tmp_path)
+        assert self._theme(path) == new
+
+    @pytest.mark.parametrize("old,new", sorted(RETIRED.items()))
+    def test_mapping_targets_exist_in_tokens(self, old, new):
+        """読み替え先が実在しないと結局 light に落ちるので突き合わせる。"""
+        from app.gui.theme import TOKENS
+        assert new in TOKENS
+
+    def test_named_projects_are_remapped(self, tmp_path):
+        pm = ProjectManager(tmp_path)
+        a, b = pm.add("仕事"), pm.add("私用")
+        self._write(pm.store_paths(a.id)["project_settings"], "dracula")
+        self._write(pm.store_paths(b.id)["project_settings"], "nord")
+        self._write(tmp_path / "default_project_settings.json", "monokai")
+        migrate_retired_theme_names(tmp_path)
+        assert self._theme(pm.store_paths(a.id)["project_settings"]) == "dark"
+        assert self._theme(pm.store_paths(b.id)["project_settings"]) == "navy"
+        assert self._theme(tmp_path / "default_project_settings.json") == "coffee"
+
+    def test_other_keys_are_preserved(self, tmp_path):
+        path = tmp_path / "default_project_settings.json"
+        path.write_text(json.dumps({
+            "theme": "nord",
+            "place_names": {"c:\\": "システム"},
+            "tabs": ["C:\\Users"],
+        }), encoding="utf-8")
+        migrate_retired_theme_names(tmp_path)
+        assert json.loads(path.read_text("utf-8")) == {
+            "theme": "navy",
+            "place_names": {"c:\\": "システム"},
+            "tabs": ["C:\\Users"],
+        }
+
+    def test_is_idempotent(self, tmp_path):
+        path = tmp_path / "default_project_settings.json"
+        self._write(path, "gruvbox_dark")
+        migrate_retired_theme_names(tmp_path)
+        migrate_retired_theme_names(tmp_path)
+        assert self._theme(path) == "coffee"
+
+    def test_current_theme_untouched(self, tmp_path):
+        from app.gui.theme import THEME_ORDER
+        path = tmp_path / "default_project_settings.json"
+        for name in THEME_ORDER:
+            self._write(path, name)
+            migrate_retired_theme_names(tmp_path)
+            assert self._theme(path) == name
+
+    def test_unknown_theme_left_alone(self, tmp_path):
+        """対応表にない未知の値は勝手に潰さない（手書き設定の尊重）。"""
+        path = tmp_path / "default_project_settings.json"
+        self._write(path, "my_custom_theme")
+        migrate_retired_theme_names(tmp_path)
+        assert self._theme(path) == "my_custom_theme"
+
+    def test_corrupt_file_is_skipped(self, tmp_path):
+        pm = ProjectManager(tmp_path)
+        proj = pm.add("仕事")
+        good = pm.store_paths(proj.id)["project_settings"]
+        self._write(good, "dracula")
+        bad = tmp_path / "default_project_settings.json"
+        bad.write_text("{ bad", encoding="utf-8")
+        migrate_retired_theme_names(tmp_path)  # クラッシュしない
+        assert bad.read_text("utf-8") == "{ bad"  # 壊れたファイルは触らない
+        assert self._theme(good) == "dark"       # 他は処理が続く
+
+    def test_non_dict_and_non_str_theme(self, tmp_path):
+        path = tmp_path / "default_project_settings.json"
+        path.write_text(json.dumps(["nord"]), encoding="utf-8")
+        migrate_retired_theme_names(tmp_path)
+        assert json.loads(path.read_text("utf-8")) == ["nord"]
+        path.write_text(json.dumps({"theme": ["nord"]}), encoding="utf-8")
+        migrate_retired_theme_names(tmp_path)
+        assert json.loads(path.read_text("utf-8")) == {"theme": ["nord"]}
+
+    def test_no_files_at_all(self, tmp_path):
+        migrate_retired_theme_names(tmp_path)  # 何も起きない
         assert not (tmp_path / "default_project_settings.json").exists()
 
 

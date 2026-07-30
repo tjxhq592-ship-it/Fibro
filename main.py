@@ -43,13 +43,19 @@ def main() -> int:
     from PySide6.QtWidgets import QApplication
 
     from app.gui.main_window import MainWindow
-    from app.migrations import migrate_default_project_settings
+    from app.migrations import (
+        migrate_default_project_settings,
+        migrate_retired_theme_names,
+    )
     from app.paths import APP_ICON, CONFIG_DIR
 
     # 旧 settings.json のプロジェクト範囲キー（theme/place_names/tabs）を
     # default_project_settings.json へ移す（初回起動時のみ・冪等）。
     # MainWindow が settings.json を読む前に必ず実行する。
     migrate_default_project_settings(CONFIG_DIR)
+    # 廃止テーマ名を後継へ読み替える。上の移動が済んだ後に走らせる必要がある
+    # （theme キーが default_project_settings.json 側に来てから見るため）。
+    migrate_retired_theme_names(CONFIG_DIR)
 
     _install_excepthook()
 
