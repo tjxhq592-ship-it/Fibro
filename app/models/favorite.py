@@ -102,6 +102,113 @@ class FavoriteStore:
         """指定 parent_id 直下のお気に入りを、保存順で返す。"""
         return [f for f in self.favorites if f.parent_id == parent_id]
 
+    # ---- 位置を指定した挿入・移動（ドラッグ&ドロップ用） ----
+    #
+    # favorites は「フラットなリスト + parent_id」で、表示順は children_of()
+    # （リスト順のフィルタ）が決める。したがって **兄弟同士の相対順序さえ
+    # 保てばよく**、リスト全体を depth-first に並べ直す必要はない。
+    # ただし挿入・移動はどちらも depth-first 順を壊さないように実装してある
+    # （favorites.json を人が読んだときに木の形が見えるようにするため）。
+
+    def _descendant_ids(self, fav_id: str) -> set[str]:
+        """指定 id の全子孫の id を返す（自身は含まない）。"""
+        found: set[str] = set()
+        changed = True
+        while changed:
+            changed = False
+            for f in self.favorites:
+                if f.id in found:
+                    continue
+                if f.parent_id == fav_id or f.parent_id in found:
+                    found.add(f.id)
+                    changed = True
+        return found
+
+    def _subtree_end(self, flat_index: int) -> int:
+        """flat_index の要素とその子孫すべての「次」の位置を返す。"""
+        ids = {self.favorites[flat_index].id}
+        end = flat_index + 1
+        for i in range(flat_index + 1, len(self.favorites)):
+            if self.favorites[i].parent_id in ids:
+                ids.add(self.favorites[i].id)
+                end = i + 1
+        return end
+
+    def _flat_index_for(self, parent_id: str, index: int) -> int:
+        """「parent_id の index 番目の子の直前」に当たるフラット位置を返す。
+
+        index が負、または兄弟数以上なら「最後の兄弟（の子孫込み）の直後」。
+        兄弟が 1 つも無ければ、親自身の直後（トップ階層ならリスト末尾）。
+        """
+        positions = [i for i, f in enumerate(self.favorites)
+                     if f.parent_id == parent_id]
+        if not positions:
+            if not parent_id:
+                return len(self.favorites)
+            for i, f in enumerate(self.favorites):
+                if f.id == parent_id:
+                    return i + 1
+            return len(self.favorites)
+        if index < 0 or index >= len(positions):
+            return self._subtree_end(positions[-1])
+        return positions[index]
+
+    def insert_many(self, specs, *, parent_id: str = "",
+                    index: int = -1) -> list[Favorite]:
+        """複数の「お気に入り」を指定位置へまとめて挿入し、保存は 1 回だけ行う。
+
+        specs は Favorite そのもの、または Favorite のフィールド名をキーに
+        持つマッピング（``{"label": ..., "path": ..., "is_file": ...}``）の
+        並び。**渡された順序のまま**挿入する。
+
+        index は parent_id の子の中での挿入位置。負値・兄弟数以上なら末尾。
+        1 件も無ければ何もせず（save() も呼ばず）空リストを返す。
+        """
+        favs: list[Favorite] = []
+        for spec in specs:
+            fav = spec if isinstance(spec, Favorite) else Favorite(**dict(spec))
+            fav.parent_id = parent_id
+            favs.append(fav)
+        if not favs:
+            return []
+        at = self._flat_index_for(parent_id, index)
+        self.favorites[at:at] = favs
+        self.save()
+        return favs
+
+    def move(self, fav_id: str, *, parent_id: str, index: int) -> bool:
+        """既存の「お気に入り」を別の親・位置へ移す。
+
+        グループは子孫ごと移動する。自分自身や子孫の中へは移せない
+        （木が壊れるため False を返して何もしない）。index は **移動前の**
+        兄弟列に対する位置として解釈する（「C の直前へ」がそのまま通る）。
+        """
+        fav = next((f for f in self.favorites if f.id == fav_id), None)
+        if fav is None:
+            return False
+        if parent_id == fav_id:
+            return False
+        descendants = self._descendant_ids(fav_id)
+        if parent_id in descendants:
+            return False
+        if parent_id and not any(f.id == parent_id for f in self.favorites):
+            return False  # 存在しない親（孤児化を防ぐ）
+
+        # 挿入位置は「取り除く前」のリストに対して求める。取り除いてから
+        # 数えると、同じ親の中で後ろへ動かすとき 1 つずれる。
+        at = self._flat_index_for(parent_id, index)
+        block_ids = {fav_id} | descendants
+        block = [f for f in self.favorites if f.id in block_ids]
+        removed_before = sum(1 for i, f in enumerate(self.favorites)
+                             if i < at and f.id in block_ids)
+        self.favorites = [f for f in self.favorites if f.id not in block_ids]
+        at -= removed_before
+        at = max(0, min(at, len(self.favorites)))
+        fav.parent_id = parent_id
+        self.favorites[at:at] = block
+        self.save()
+        return True
+
     def remove(self, fav_id: str) -> bool:
         """お気に入りを削除。グループの場合は子孫もまとめて削除する。"""
         # 削除対象 id を収集（自身 + 全子孫）
