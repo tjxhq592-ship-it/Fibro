@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import QPoint, QRect, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import (
+    QPoint, QPointF, QRect, QRectF, Qt, QThreadPool, QTimer, Signal,
+)
+from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QInputDialog, QMenu, QMessageBox, QTreeWidget, QTreeWidgetItem,
     QVBoxLayout, QWidget,
@@ -28,6 +30,11 @@ _IS_GROUP_ROLE = Qt.ItemDataRole.UserRole + 1
 _DROP_BAND = 0.25
 #: 挿入位置を示すバーの太さ（px）。
 _BAR_THICKNESS = 2
+#: バー両端の丸キャップの半径（px）。細い線だけだと見落としやすいため付ける。
+_BAR_CAP = 3
+#: "into"（グループの中へ）を示す枠線の太さと角丸半径。
+_FRAME_WIDTH = 1.5
+_FRAME_RADIUS = 4
 
 
 @dataclass
@@ -97,6 +104,11 @@ class _FavTree(QTreeWidget):
     dropped = Signal()
     urls_dropped = Signal(list, object)  # paths, ドロップ先 item（group or None）
     rename_requested = Signal()          # F2: 現在の項目のリネーム要求
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        #: 現在のドロップ先。None ならインジケータを描かない。
+        self._drop_hint: DropTarget | None = None
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 — Qt API
         """F2 で選択中のお気に入りをリネーム（項目はインライン編集不可のため自前で処理）。"""
@@ -202,6 +214,40 @@ class _FavTree(QTreeWidget):
         # 葉に「中に入れる」は無い。中点で直前 / 直後に振り分ける。
         return self._between(item, rect, after=rel >= height / 2)
 
+    # ---- インジケータの描画（自前） ----
+
+    def _set_hint(self, target: DropTarget | None) -> None:
+        if target == self._drop_hint:
+            return  # ドラッグ中は毎ピクセル呼ばれるので、変化時だけ再描画する
+        self._drop_hint = target
+        self.viewport().update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802 — Qt API
+        super().paintEvent(event)
+        hint = self._drop_hint
+        if hint is None:
+            return
+        painter = QPainter(self.viewport())
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        color = QColor(current_tokens()["accent"])  # 色はテーマトークンから
+        if hint.mode == "into":
+            pen = QPen(color)
+            pen.setWidthF(_FRAME_WIDTH)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)  # 塗ると文字が読めなくなる
+            painter.drawRoundedRect(
+                QRectF(hint.rect).adjusted(1, 1, -1, -1),
+                _FRAME_RADIUS, _FRAME_RADIUS)
+        else:
+            rect = hint.rect
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawRect(rect)
+            cy = rect.top() + rect.height() / 2
+            for cx in (rect.left() + _BAR_CAP, rect.right() - _BAR_CAP):
+                painter.drawEllipse(QPointF(cx, cy), _BAR_CAP, _BAR_CAP)
+        painter.end()
+
     def dragEnterEvent(self, event) -> None:  # noqa: N802 — Qt API
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
@@ -213,8 +259,16 @@ class _FavTree(QTreeWidget):
             event.acceptProposedAction()
         else:
             super().dragMoveEvent(event)
+        self._set_hint(self._drop_target(event.position().toPoint())
+                       if event.isAccepted() else None)
+
+    def dragLeaveEvent(self, event) -> None:  # noqa: N802 — Qt API
+        # ドロップ時と離脱時の両方で消さないと、バーが描かれたまま残る
+        self._set_hint(None)
+        super().dragLeaveEvent(event)
 
     def dropEvent(self, event) -> None:  # noqa: N802 — Qt API
+        self._set_hint(None)
         mime = event.mimeData()
         if mime.hasUrls():
             paths = [u.toLocalFile() for u in mime.urls() if u.isLocalFile()]

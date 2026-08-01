@@ -400,6 +400,85 @@ class TestDropTargetEmptyArea:
         assert rect.bottom() < sidebar.tree.viewport().height()
 
 
+def send_drag_move(tree, point):
+    from PySide6.QtCore import QMimeData, Qt, QUrl
+    from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(r"C:\Windows")])
+    args = (Qt.DropAction.MoveAction, mime, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier)
+    tree.dragEnterEvent(QDragEnterEvent(point, *args))
+    tree.dragMoveEvent(QDragMoveEvent(point, *args))
+    return mime
+
+
+class TestDropHintLifecycle:
+    """T-8: インジケータの状態がドラッグ後に残らない。"""
+
+    @pytest.fixture
+    def sidebar(self, sidebar_factory):
+        def build(store):
+            for name in ("A", "B"):
+                store.add(name, str(name))
+        return sidebar_factory(build)
+
+    def _hover(self, sidebar):
+        tree = sidebar.tree
+        item = sidebar._items_by_id[sidebar._store.favorites[0].id]
+        return send_drag_move(tree, point_in(tree, item, 1))
+
+    def test_hint_set_on_drag_move(self, sidebar):
+        self._hover(sidebar)
+        assert sidebar.tree._drop_hint is not None
+
+    def test_hint_cleared_on_drag_leave(self, sidebar):
+        from PySide6.QtGui import QDragLeaveEvent
+        self._hover(sidebar)
+        sidebar.tree.dragLeaveEvent(QDragLeaveEvent())
+        assert sidebar.tree._drop_hint is None
+
+    def test_hint_cleared_on_drop(self, sidebar, tmp_path):
+        from PySide6.QtCore import QMimeData, QPoint, Qt, QUrl
+        from PySide6.QtGui import QDropEvent
+        tree = sidebar.tree
+        self._hover(sidebar)
+        target = tmp_path / "dropped"
+        target.mkdir()
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(str(target))])
+        tree.dropEvent(QDropEvent(
+            QPoint(*point_in(tree, sidebar._items_by_id[
+                sidebar._store.favorites[0].id], 1).toTuple()),
+            Qt.DropAction.MoveAction, mime, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier))
+        assert tree._drop_hint is None
+
+    def test_paints_without_error(self, sidebar, qapp):
+        """バー / 枠の描画が例外にならない（QPainter の使い方の回帰ゲート）。"""
+        from PySide6.QtGui import QPixmap
+        tree = sidebar.tree
+        for mode in ("between", "into"):
+            item = sidebar._items_by_id[sidebar._store.favorites[0].id]
+            rect = tree.visualItemRect(item)
+            from app.gui.favorites_sidebar import DropTarget
+            tree._drop_hint = DropTarget("", 0, mode, rect, 0)
+            pixmap = QPixmap(tree.viewport().size())
+            tree.viewport().render(pixmap)
+            qapp.processEvents()
+        tree._drop_hint = None
+
+    def test_indicator_color_comes_from_theme(self):
+        """色のハードコード禁止（トークン経由であること）。"""
+        import inspect
+        import re
+
+        from app.gui import favorites_sidebar
+        src = inspect.getsource(favorites_sidebar._FavTree.paintEvent)
+        assert 'current_tokens()["accent"]' in src
+        # 生のカラーコード（#rgb / #rrggbb）が混ざっていない
+        assert re.search(r"#[0-9a-fA-F]{3,8}\b", src) is None
+
+
 class TestQtIndicatorNotUsed:
     """T-9: 発見 2 の穴（Qt の位置計算に頼る）へ戻っていないことの回帰ゲート。"""
 
