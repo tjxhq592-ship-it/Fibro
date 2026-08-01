@@ -101,8 +101,8 @@ class _FavTree(QTreeWidget):
     （text/uri-list）を受けてお気に入り登録できるようにする。
     """
 
-    dropped = Signal()
-    urls_dropped = Signal(list, object)  # paths, ドロップ先 item（group or None）
+    urls_dropped = Signal(list, object)  # paths, DropTarget（外部からの登録）
+    items_moved = Signal(list, object)   # fav_id のリスト, DropTarget（内部移動）
     rename_requested = Signal()          # F2: 現在の項目のリネーム要求
 
     def __init__(self, parent=None) -> None:
@@ -183,6 +183,54 @@ class _FavTree(QTreeWidget):
         return DropTarget(parent_id="", index=count, mode="between",
                           rect=self._bar_rect(y, 0), depth=0)
 
+    def _display_order(self) -> list[QTreeWidgetItem]:
+        """折りたたみに関係なく、ツリーの表示順で全 item を列挙する。"""
+        out: list[QTreeWidgetItem] = []
+
+        def walk(item: QTreeWidgetItem) -> None:
+            for i in range(item.childCount()):
+                child = item.child(i)
+                out.append(child)
+                walk(child)
+
+        walk(self.invisibleRootItem())
+        return out
+
+    def dragged_ids(self) -> list[str]:
+        """内部ドラッグで掴んでいる fav_id を、選択順ではなく表示順で返す。
+
+        グループとその子孫が同時に選ばれている場合、子孫は除く
+        （グループごと動くので、二重に動かすと壊れる）。
+        """
+        chosen = set(self.selectedItems())
+        if not chosen and self.currentItem() is not None:
+            chosen = {self.currentItem()}  # 選択が無いままドラッグされた場合
+        ids: list[str] = []
+        for item in self._display_order():
+            if item not in chosen:
+                continue
+            parent = item.parent()
+            while parent is not None:
+                if parent in chosen:
+                    break
+                parent = parent.parent()
+            else:
+                ids.append(self._item_id(item))
+        return ids
+
+    def _is_inside_dragged(self, target: DropTarget) -> bool:
+        """掴んでいるグループ自身、またはその子孫の中へ落とそうとしているか。"""
+        dragged = set(self.dragged_ids())
+        if not dragged or not target.parent_id:
+            return False
+        node = next((it for it in self._display_order()
+                     if self._item_id(it) == target.parent_id), None)
+        while node is not None:
+            if self._item_id(node) in dragged:
+                return True
+            node = node.parent()
+        return False
+
     def _drop_target(self, point: QPoint) -> DropTarget | None:
         """カーソル位置からドロップ先を決める。"""
         item = self.itemAt(point)
@@ -248,19 +296,33 @@ class _FavTree(QTreeWidget):
                 painter.drawEllipse(QPointF(cx, cy), _BAR_CAP, _BAR_CAP)
         painter.end()
 
+    # ---- ドラッグ&ドロップ（内部移動・外部登録とも自前で処理する） ----
+    #
+    # super().dropEvent() は呼ばない。QTreeWidgetItem を Qt に動かさせず
+    # モデル側だけ更新して refresh() で描き直すことで、「グループを自分の
+    # 子孫へ落とす」といった破綻経路が構造的に消える。
+
+    def _handles(self, event) -> bool:
+        """扱えるドラッグか（外部のパス、または自分自身からの内部移動）。"""
+        return event.mimeData().hasUrls() or event.source() is self
+
     def dragEnterEvent(self, event) -> None:  # noqa: N802 — Qt API
-        if event.mimeData().hasUrls():
+        if self._handles(event):
             event.acceptProposedAction()
         else:
-            super().dragEnterEvent(event)
+            event.ignore()
 
     def dragMoveEvent(self, event) -> None:  # noqa: N802 — Qt API
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
+        target = None
+        if self._handles(event):
+            target = self._drop_target(event.position().toPoint())
+            if target is not None and self._is_inside_dragged(target):
+                target = None  # 掴んでいるものの中へは落とせない
+        if target is None:
+            event.ignore()
         else:
-            super().dragMoveEvent(event)
-        self._set_hint(self._drop_target(event.position().toPoint())
-                       if event.isAccepted() else None)
+            event.acceptProposedAction()
+        self._set_hint(target)
 
     def dragLeaveEvent(self, event) -> None:  # noqa: N802 — Qt API
         # ドロップ時と離脱時の両方で消さないと、バーが描かれたまま残る
@@ -268,22 +330,28 @@ class _FavTree(QTreeWidget):
         super().dragLeaveEvent(event)
 
     def dropEvent(self, event) -> None:  # noqa: N802 — Qt API
+        target = (self._drop_target(event.position().toPoint())
+                  if self._handles(event) else None)
         self._set_hint(None)
+        if target is None or self._is_inside_dragged(target):
+            event.ignore()
+            return
         mime = event.mimeData()
         if mime.hasUrls():
             paths = [u.toLocalFile() for u in mime.urls() if u.isLocalFile()]
-            target = self.itemAt(event.position().toPoint())
             if paths:
                 self.urls_dropped.emit(paths, target)
-            event.acceptProposedAction()
-            return
-        super().dropEvent(event)
-        self.dropped.emit()
+        else:
+            ids = self.dragged_ids()
+            if ids:
+                self.items_moved.emit(ids, target)
+        event.acceptProposedAction()
 
 
 class FavoritesSidebar(QWidget):
     path_selected = Signal(str)              # フォルダのお気に入り → フォルダへ移動
     file_activated = Signal(str)             # ファイルのお気に入り → 既定アプリで開く
+    notify_requested = Signal(str, str)      # kind, message（MainWindow.notify へ）
     _reach_checked = Signal(int, str, bool)  # gen, fav_id, reachable
     _activate_checked = Signal(int, bool)    # gen, reachable（クリック時の確認）
 
@@ -316,8 +384,11 @@ class FavoritesSidebar(QWidget):
         self.tree.setDropIndicatorShown(False)
         self.tree.setAutoExpandDelay(700)  # 折りたたみグループへホバーで自動展開
         self.tree.setAcceptDrops(True)  # 外部（ファイル一覧）からの登録ドロップ用
-        self.tree.dropped.connect(self._persist_structure)
+        # 内部移動をまとめて行えるように複数選択を許可する
+        self.tree.setSelectionMode(
+            QTreeWidget.SelectionMode.ExtendedSelection)
         self.tree.urls_dropped.connect(self._on_urls_dropped)
+        self.tree.items_moved.connect(self._on_items_moved)
         self.tree.itemClicked.connect(self._on_clicked)
         self.tree.itemDoubleClicked.connect(self._on_double_clicked)
         self.tree.itemExpanded.connect(self._on_item_expanded)
@@ -459,27 +530,50 @@ class FavoritesSidebar(QWidget):
                         is_file=P(path).is_file())
         self.refresh()
 
-    def _on_urls_dropped(self, paths: list[str], target) -> None:
+    def _on_urls_dropped(self, paths: list[str], target: DropTarget) -> None:
         """ファイル一覧などからドロップされたパスをお気に入りに登録する。
 
-        ドロップ先がグループならその配下、そうでなければトップ階層へ。
-        表示名は付け足し入力なしでファイル/フォルダ名を使い、複数まとめて登録。
-        重複（同一パス）はスキップする。
+        カーソル位置から決まった挿入位置（target）へ、**渡された順序のまま**
+        まとめて登録する。表示名は付け足し入力なしでファイル/フォルダ名を使う。
+        重複（同一パス）はスキップし、全件重複なら無言で終わらず通知する。
         """
         from pathlib import Path as P
-        parent_id = ""
-        if target is not None:
-            fav = self._fav_for_item(target)
-            if fav is not None and fav.is_group:
-                parent_id = fav.id
-        added = 0
+        specs = []
+        # 登録は最後にまとめて行うので、同じドロップ内の重複は自分で覚えておく
+        # （store.find_by_path はまだ挿入前の分を知らない）。
+        seen: set[str] = set()
         for path in paths:
             if not path or self._store.find_by_path(path):
                 continue
-            self._store.add(P(path).name or path, path, parent_id=parent_id,
-                            is_file=P(path).is_file())
-            added += 1
-        if added:
+            norm = str(P(path))
+            if norm in seen:
+                continue
+            seen.add(norm)
+            specs.append({"label": P(path).name or path, "path": path,
+                          "is_file": P(path).is_file()})
+        if not specs:
+            # 何も起きないとドロップ失敗に見えるので必ず伝える
+            self.notify_requested.emit("warning", _("fav_already_msg"))
+            return
+        self._store.insert_many(specs, parent_id=target.parent_id,
+                                index=target.index)
+        self.refresh()
+
+    def _on_items_moved(self, fav_ids: list[str], target: DropTarget) -> None:
+        """既存のお気に入りを、カーソル位置で決まった位置へ移動する。"""
+        index = target.index
+        moved = False
+        for fav_id in fav_ids:
+            if not self._store.move(fav_id, parent_id=target.parent_id,
+                                    index=index):
+                continue
+            moved = True
+            # 次の 1 件は今動かしたものの直後へ。移動後の実位置から数え直す
+            # （同じ親の中で後ろへ動かすと添字がずれるため）。
+            siblings = self._store.children_of(target.parent_id)
+            index = next(i for i, f in enumerate(siblings)
+                         if f.id == fav_id) + 1
+        if moved:
             self.refresh()
 
     def _add_group(self, parent_id: str = "") -> None:
@@ -500,30 +594,10 @@ class FavoritesSidebar(QWidget):
             return fav.id
         return ""
 
-    # ---- 構造の永続化（D&D 後） ----
-    def _persist_structure(self) -> None:
-        """ツリーを走査して parent_id・順序を再構築し、ストアに保存。"""
-        by_id = {f.id: f for f in self._store.favorites}
-        ordered: list = []
-
-        def walk(item: QTreeWidgetItem, parent_id: str) -> None:
-            for i in range(item.childCount()):
-                child = item.child(i)
-                fid = child.data(0, _ID_ROLE)
-                fav = by_id.get(fid)
-                if fav is None:
-                    continue
-                fav.parent_id = parent_id
-                ordered.append(fav)
-                walk(child, fav.id)
-
-        root = self.tree.invisibleRootItem()
-        walk(root, "")
-        if len(ordered) == len(self._store.favorites):
-            self._store.reorder(ordered)
-        else:
-            # 不整合時は保存せず再描画のみ（データ損失を避ける）
-            self.refresh()
+    # 以前あった _persist_structure（ツリーを走査して parent_id・順序を
+    # 作り直す後処理）は削除した。Qt に item を動かさせなくなったので、
+    # 構造の正は常にストア側（insert_many / move）になり、ツリーは
+    # refresh() で描き直すだけになったため。
 
     # ---- 操作 ----
     def _fav_for_item(self, item: QTreeWidgetItem):

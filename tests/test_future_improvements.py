@@ -92,11 +92,13 @@ class TestFavoritesReorder:
         store.add("B", str(tmp_path))
         store.add("C", str(tmp_path))
         sidebar = FavoritesSidebar(store)
-        # トップ階層の item を A,C,B の順に並べ替えて構造を永続化
-        tree = sidebar.tree
-        item_a = tree.takeTopLevelItem(0)
-        tree.addTopLevelItem(item_a)  # A を末尾へ → B, C, A
-        sidebar._persist_structure()
+        # 内部移動は _on_items_moved 経由でストアに反映される
+        # （ツリーを直接いじる _persist_structure は廃止）
+        from app.gui.favorites_sidebar import DropTarget
+        from PySide6.QtCore import QRect
+        a_id = store.favorites[0].id
+        sidebar._on_items_moved([a_id], DropTarget("", 3, "between",
+                                                   QRect(), 0))
         assert [f.label for f in store.favorites] == ["B", "C", "A"]
         # 再読み込みでも順序維持
         assert [f.label for f in FavoriteStore(tmp_path / "f.json").favorites] \
@@ -110,6 +112,13 @@ class TestFavoritesReorder:
             QTreeWidget.DragDropMode.DragDrop
 
 
+def _top_end():
+    """トップ階層の末尾を指す DropTarget（描画情報は使わないので空）。"""
+    from app.gui.favorites_sidebar import DropTarget
+    from PySide6.QtCore import QRect
+    return DropTarget("", -1, "between", QRect(), 0)
+
+
 class TestFavoritesDropRegister:
     def test_drop_registers_paths_at_top(self, qapp, tmp_path):
         """外部ドロップでパスがトップ階層に登録される（重複はスキップ）。"""
@@ -119,20 +128,22 @@ class TestFavoritesDropRegister:
         d2.mkdir()
         store = FavoriteStore(tmp_path / "f.json")
         sidebar = FavoritesSidebar(store)
-        sidebar._on_urls_dropped([str(d1), str(d2), str(d1)], None)
+        sidebar._on_urls_dropped([str(d1), str(d2), str(d1)], _top_end())
         labels = [f.label for f in store.favorites if not f.is_group]
         assert labels == ["alpha", "beta"]  # 重複 d1 はスキップ
         assert all(f.parent_id == "" for f in store.favorites)
 
     def test_drop_onto_group_nests(self, qapp, tmp_path):
         """グループの上にドロップするとその配下に登録される。"""
+        from app.gui.favorites_sidebar import DropTarget
+        from PySide6.QtCore import QRect
         d = tmp_path / "gamma"
         d.mkdir()
         store = FavoriteStore(tmp_path / "f.json")
         gid = store.add_group("グループ").id
         sidebar = FavoritesSidebar(store)
-        target = sidebar._items_by_id[gid]
-        sidebar._on_urls_dropped([str(d)], target)
+        sidebar._on_urls_dropped(
+            [str(d)], DropTarget(gid, 0, "into", QRect(), 1))
         leaf = next(f for f in store.favorites if not f.is_group)
         assert leaf.parent_id == gid
         assert leaf.label == "gamma"

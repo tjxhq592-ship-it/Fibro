@@ -479,6 +479,149 @@ class TestDropHintLifecycle:
         assert re.search(r"#[0-9a-fA-F]{3,8}\b", src) is None
 
 
+class TestDropRouting:
+    """T-7 / T-10 と §6: 外部登録・内部移動が 1 本の経路を通る。"""
+
+    @pytest.fixture
+    def sidebar(self, sidebar_factory, tmp_path):
+        def build(store):
+            for name in ("A", "B", "C"):
+                (tmp_path / name).mkdir()
+                store.add(name, str(tmp_path / name))
+        return sidebar_factory(build)
+
+    def _target(self, parent_id="", index=-1, mode="between"):
+        from PySide6.QtCore import QRect
+
+        from app.gui.favorites_sidebar import DropTarget
+        return DropTarget(parent_id, index, mode, QRect(), 0)
+
+    def _paths(self, tmp_path, *names):
+        made = []
+        for name in names:
+            (tmp_path / name).mkdir(exist_ok=True)
+            made.append(str(tmp_path / name))
+        return made
+
+    # ---- 外部ドロップ ----
+
+    def test_inserts_at_position_in_order(self, sidebar, tmp_path):
+        sidebar._on_urls_dropped(self._paths(tmp_path, "X", "Y"),
+                                 self._target(index=1))
+        assert labels_of(sidebar._store) == ["A", "X", "Y", "B", "C"]
+
+    def test_duplicates_skipped_but_rest_inserted(self, sidebar, tmp_path):
+        existing = str(tmp_path / "A")
+        sidebar._on_urls_dropped([existing] + self._paths(tmp_path, "X"),
+                                 self._target(index=0))
+        assert labels_of(sidebar._store) == ["X", "A", "B", "C"]
+
+    def test_all_duplicates_notifies_and_does_not_save(
+            self, sidebar, tmp_path, monkeypatch):
+        """T-7: 全件重複なら保存もせず、無言でもなく通知する。"""
+        calls = []
+        monkeypatch.setattr(sidebar._store, "save", lambda: calls.append(1))
+        seen = []
+        sidebar.notify_requested.connect(
+            lambda kind, msg: seen.append((kind, msg)))
+        sidebar._on_urls_dropped([str(tmp_path / "A"), str(tmp_path / "B")],
+                                 self._target(index=0))
+        assert calls == []
+        assert len(seen) == 1 and seen[0][0] == "warning"
+        assert labels_of(sidebar._store) == ["A", "B", "C"]
+
+    def test_drop_into_group_appends_inside(self, sidebar_factory, tmp_path):
+        """T-10: グループの上へのドロップは、従来どおり配下（末尾）へ。"""
+        def build(store):
+            group = store.add_group("G")
+            store.add("g1", str(tmp_path / "g1"), parent_id=group.id)
+        sidebar = sidebar_factory(build)
+        group = next(f for f in sidebar._store.favorites if f.is_group)
+        item = sidebar._items_by_id[group.id]
+        target = sidebar.tree._drop_target(point_in(sidebar.tree, item, 12))
+        assert target.mode == "into"
+        sidebar._on_urls_dropped(self._paths(tmp_path, "X"), target)
+        assert labels_of(sidebar._store, group.id) == ["g1", "X"]
+        assert labels_of(sidebar._store) == ["G"]
+
+    # ---- 内部移動 ----
+
+    def test_move_single_item(self, sidebar):
+        store = sidebar._store
+        sidebar._on_items_moved([store.favorites[2].id], self._target(index=0))
+        assert labels_of(store) == ["C", "A", "B"]
+
+    def test_move_multiple_keeps_order(self, sidebar):
+        """複数選択の移動で、掴んだ並びが崩れない。"""
+        store = sidebar._store
+        ids = [store.favorites[0].id, store.favorites[1].id]  # A, B
+        sidebar._on_items_moved(ids, self._target(index=3))   # C の後ろへ
+        assert labels_of(store) == ["C", "A", "B"]
+
+    def test_move_into_group(self, sidebar_factory, tmp_path):
+        def build(store):
+            store.add_group("G")
+            store.add("A", str(tmp_path / "A"))
+            store.add("B", str(tmp_path / "B"))
+        sidebar = sidebar_factory(build)
+        store = sidebar._store
+        gid = next(f.id for f in store.favorites if f.is_group)
+        ids = [f.id for f in store.favorites if f.label in ("A", "B")]
+        sidebar._on_items_moved(ids, self._target(parent_id=gid, index=0))
+        assert labels_of(store, gid) == ["A", "B"]
+        assert labels_of(store) == ["G"]
+
+    def test_move_into_own_descendant_is_rejected(
+            self, sidebar_factory, tmp_path):
+        def build(store):
+            outer = store.add_group("G")
+            store.add_group("H", parent_id=outer.id)
+        sidebar = sidebar_factory(build)
+        store = sidebar._store
+        outer = next(f for f in store.favorites if f.label == "G")
+        inner = next(f for f in store.favorites if f.label == "H")
+        sidebar._on_items_moved([outer.id],
+                                self._target(parent_id=inner.id, index=0))
+        assert labels_of(store) == ["G"]
+        assert labels_of(store, outer.id) == ["H"]
+
+    # ---- ドラッグ元の判定 ----
+
+    def test_dragged_ids_use_display_order(self, sidebar):
+        tree = sidebar.tree
+        store = sidebar._store
+        items = [sidebar._items_by_id[f.id] for f in store.favorites]
+        items[2].setSelected(True)   # 選択順は C → A
+        items[0].setSelected(True)
+        assert tree.dragged_ids() == [store.favorites[0].id,
+                                      store.favorites[2].id]
+
+    def test_dragged_ids_drop_descendants_of_selection(
+            self, sidebar_factory, tmp_path):
+        """グループごと掴んだら、その中の子は二重に動かさない。"""
+        def build(store):
+            group = store.add_group("G")
+            store.add("g1", str(tmp_path / "g1"), parent_id=group.id)
+        sidebar = sidebar_factory(build)
+        for item in sidebar._items_by_id.values():
+            item.setSelected(True)
+        group = next(f for f in sidebar._store.favorites if f.is_group)
+        assert sidebar.tree.dragged_ids() == [group.id]
+
+    def test_no_super_dropevent_call(self):
+        """Qt に item を動かさせない（構造の正はストア側だけ）。"""
+        import inspect
+
+        from app.gui import favorites_sidebar
+        src = inspect.getsource(favorites_sidebar._FavTree.dropEvent)
+        assert "super().dropEvent" not in src
+
+    def test_persist_structure_is_gone(self):
+        """Qt の内部移動を前提にした後処理は残っていない。"""
+        from app.gui.favorites_sidebar import FavoritesSidebar
+        assert not hasattr(FavoritesSidebar, "_persist_structure")
+
+
 class TestQtIndicatorNotUsed:
     """T-9: 発見 2 の穴（Qt の位置計算に頼る）へ戻っていないことの回帰ゲート。"""
 

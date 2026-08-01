@@ -653,6 +653,7 @@ class MainWindow(QMainWindow):
         self.favorites = FavoritesSidebar(self.favorite_store)
         self.favorites.path_selected.connect(self.navigate)
         self.favorites.file_activated.connect(self._open_file)
+        self.favorites.notify_requested.connect(self.notify)
         self.recent_sidebar = RecentSidebar(self.recent_store)
         self.recent_sidebar.path_selected.connect(self.navigate)
         self.places_sidebar = PlacesSidebar(self.project_settings)
