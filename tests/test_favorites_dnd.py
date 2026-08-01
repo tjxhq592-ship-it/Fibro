@@ -210,3 +210,215 @@ class TestMove:
 def qapp():
     from PySide6.QtWidgets import QApplication
     return QApplication.instance() or QApplication([])
+
+
+ROW_H = 24  # 判定の境界値を px で書けるように行高を固定する
+
+
+@pytest.fixture
+def sidebar_factory(qapp, tmp_path):
+    """お気に入りサイドバーを作って、行高 24px で表示状態にして返す。"""
+    from PySide6.QtCore import QSize
+
+    from app.gui.favorites_sidebar import FavoritesSidebar
+
+    made = []
+
+    def make(build) -> "FavoritesSidebar":
+        store = FavoriteStore(tmp_path / "favorites.json")
+        build(store)
+        sidebar = FavoritesSidebar(store)
+        made.append(sidebar)
+        for item in sidebar._items_by_id.values():
+            item.setSizeHint(0, QSize(160, ROW_H))
+        sidebar.resize(240, 400)
+        sidebar.show()
+        qapp.processEvents()
+        return sidebar
+
+    yield make
+    for sidebar in made:
+        sidebar.close()
+        sidebar.deleteLater()
+    qapp.processEvents()
+
+
+def point_in(tree, item, rel_y: int):
+    """item の上端から rel_y px の位置（ビューポート座標）。"""
+    from PySide6.QtCore import QPoint
+    rect = tree.visualItemRect(item)
+    return QPoint(rect.center().x(), rect.top() + rel_y)
+
+
+class TestDropTargetBands:
+    """T-1: 上下 25% の帯と中央 50% の境界。"""
+
+    @pytest.fixture
+    def flat(self, sidebar_factory):
+        def build(store):
+            for name in ("A", "B", "C"):
+                store.add(name, str(name))
+        return sidebar_factory(build)
+
+    def _target(self, sidebar, label: str, rel_y: int):
+        fav = next(f for f in sidebar._store.favorites if f.label == label)
+        item = sidebar._items_by_id[fav.id]
+        assert sidebar.tree.visualItemRect(item).height() == ROW_H
+        return sidebar.tree._drop_target(point_in(sidebar.tree, item, rel_y))
+
+    @pytest.mark.parametrize("rel_y", [0, 1, 5])
+    def test_top_band_inserts_before(self, flat, rel_y):
+        target = self._target(flat, "B", rel_y)
+        assert (target.parent_id, target.index, target.mode) == ("", 1, "between")
+
+    @pytest.mark.parametrize("rel_y", [19, 23])
+    def test_bottom_band_inserts_after(self, flat, rel_y):
+        target = self._target(flat, "B", rel_y)
+        assert (target.parent_id, target.index, target.mode) == ("", 2, "between")
+
+    def test_boundary_25_percent_belongs_to_middle(self, flat):
+        """境界値ちょうど（6 と 18）は中央扱い。葉なので中点で振り分けられる。"""
+        assert self._target(flat, "B", 6).index == 1   # 中点より上 → 直前
+        assert self._target(flat, "B", 18).index == 2  # 中点より下 → 直後
+
+    @pytest.mark.parametrize("rel_y,index", [(7, 1), (11, 1), (12, 2), (17, 2)])
+    def test_leaf_middle_splits_at_midpoint(self, flat, rel_y, index):
+        """T-2: 葉には "into" が無く、中央 50% は中点で上下に割れる。"""
+        target = self._target(flat, "B", rel_y)
+        assert target.mode == "between"
+        assert target.index == index
+
+    def test_depth_is_zero_at_top_level(self, flat):
+        assert self._target(flat, "B", 1).depth == 0
+
+
+class TestDropTargetGroups:
+    """T-2 / T-3: グループの中央は "into"、下端は展開状態で変わる。"""
+
+    def _tree(self, sidebar_factory, *, expanded: bool, with_child: bool):
+        def build(store):
+            store.add("A", "A")
+            group = store.add_group("G")
+            group.expanded = expanded
+            if with_child:
+                store.add("g1", "g1", parent_id=group.id)
+            store.add("Z", "Z")
+        return sidebar_factory(build)
+
+    def _at(self, sidebar, label: str, rel_y: int):
+        fav = next(f for f in sidebar._store.favorites if f.label == label)
+        item = sidebar._items_by_id[fav.id]
+        return sidebar.tree._drop_target(point_in(sidebar.tree, item, rel_y))
+
+    def test_group_middle_is_into(self, sidebar_factory):
+        sidebar = self._tree(sidebar_factory, expanded=True, with_child=True)
+        group = next(f for f in sidebar._store.favorites if f.is_group)
+        target = self._at(sidebar, "G", 12)
+        assert target.mode == "into"
+        assert target.parent_id == group.id
+        assert target.index == 1        # 末尾（既存の子 1 件の後ろ）
+        assert target.depth == 1        # 中に入るので 1 段深い
+
+    def test_collapsed_group_middle_is_still_into(self, sidebar_factory):
+        sidebar = self._tree(sidebar_factory, expanded=False, with_child=True)
+        target = self._at(sidebar, "G", 12)
+        assert target.mode == "into"
+
+    def test_group_top_band_inserts_before_group(self, sidebar_factory):
+        sidebar = self._tree(sidebar_factory, expanded=True, with_child=True)
+        target = self._at(sidebar, "G", 1)
+        assert (target.parent_id, target.index, target.depth) == ("", 1, 0)
+
+    def test_expanded_group_bottom_is_first_child(self, sidebar_factory):
+        """T-3: 視覚上の次の行が第 1 子なので、そこへ入れる。"""
+        sidebar = self._tree(sidebar_factory, expanded=True, with_child=True)
+        group = next(f for f in sidebar._store.favorites if f.is_group)
+        target = self._at(sidebar, "G", 23)
+        assert (target.parent_id, target.index) == (group.id, 0)
+        assert target.mode == "between"
+        assert target.depth == 1
+
+    def test_collapsed_group_bottom_is_next_sibling(self, sidebar_factory):
+        sidebar = self._tree(sidebar_factory, expanded=False, with_child=True)
+        target = self._at(sidebar, "G", 23)
+        assert (target.parent_id, target.index, target.depth) == ("", 2, 0)
+
+    def test_childless_group_bottom_is_next_sibling(self, sidebar_factory):
+        sidebar = self._tree(sidebar_factory, expanded=True, with_child=False)
+        target = self._at(sidebar, "G", 23)
+        assert (target.parent_id, target.index, target.depth) == ("", 2, 0)
+
+    def test_child_bottom_stays_in_group(self, sidebar_factory):
+        """グループ内最後の子の下端は、グループの末尾（外へ出さない）。"""
+        sidebar = self._tree(sidebar_factory, expanded=True, with_child=True)
+        group = next(f for f in sidebar._store.favorites if f.is_group)
+        target = self._at(sidebar, "g1", 23)
+        assert (target.parent_id, target.index, target.depth) == (group.id, 1, 1)
+
+    def test_bar_is_indented_by_depth(self, sidebar_factory):
+        sidebar = self._tree(sidebar_factory, expanded=True, with_child=True)
+        tree = sidebar.tree
+        top = self._at(sidebar, "A", 1)
+        nested = self._at(sidebar, "g1", 1)
+        assert top.rect.left() == 0
+        assert nested.rect.left() == tree.indentation()
+
+
+class TestDropTargetEmptyArea:
+    """T-4: 項目の無い空白 → トップ階層の末尾。"""
+
+    def test_empty_area_appends_to_top_level(self, sidebar_factory):
+        def build(store):
+            store.add("A", "A")
+            store.add("B", "B")
+        sidebar = sidebar_factory(build)
+        tree = sidebar.tree
+        from PySide6.QtCore import QPoint
+        last = sidebar._items_by_id[sidebar._store.favorites[-1].id]
+        y = tree.visualItemRect(last).bottom() + 60
+        assert tree.itemAt(QPoint(60, y)) is None  # 前提: 本当に空白
+        target = tree._drop_target(QPoint(60, y))
+        assert (target.parent_id, target.index, target.mode, target.depth) \
+            == ("", 2, "between", 0)
+
+    def test_empty_tree_appends_at_head(self, sidebar_factory):
+        sidebar = sidebar_factory(lambda store: None)
+        from PySide6.QtCore import QPoint
+        target = sidebar.tree._drop_target(QPoint(60, 40))
+        assert (target.parent_id, target.index) == ("", 0)
+
+    def test_bar_stays_inside_viewport(self, sidebar_factory):
+        """末尾のバーがビューポートからはみ出さない（描画で消えない）。"""
+        def build(store):
+            for i in range(40):
+                store.add(f"f{i}", f"f{i}")
+        sidebar = sidebar_factory(build)
+        from PySide6.QtCore import QPoint
+        target = sidebar.tree._drop_target(QPoint(60, 4000))
+        rect = target.rect
+        assert rect.top() >= 0
+        assert rect.bottom() < sidebar.tree.viewport().height()
+
+
+class TestQtIndicatorNotUsed:
+    """T-9: 発見 2 の穴（Qt の位置計算に頼る）へ戻っていないことの回帰ゲート。"""
+
+    def test_drop_indicator_is_hidden(self, sidebar_factory):
+        sidebar = sidebar_factory(lambda store: None)
+        assert sidebar.tree.showDropIndicator() is False
+
+    def test_no_reference_to_drop_indicator_position(self):
+        """コメントでの言及は許すが、コードから呼ぶのは禁止。"""
+        import ast
+        from pathlib import Path
+
+        offenders = []
+        for path in Path("app").rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                name = getattr(node, "attr", None) or getattr(node, "id", None)
+                if name == "dropIndicatorPosition":
+                    offenders.append(f"{path}:{node.lineno}")
+        assert offenders == [], (
+            "dropIndicatorPosition() は showDropIndicator(False) と併用できない。"
+            " docs/investigation/qt_drop_indicator_20260731.md を参照。")

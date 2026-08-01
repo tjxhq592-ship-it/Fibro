@@ -105,8 +105,9 @@ class TestFavoritesReorder:
     def test_drag_mode_enabled(self, qapp, tmp_path):
         sidebar = FavoritesSidebar(FavoriteStore(tmp_path / "f.json"))
         from PySide6.QtWidgets import QTreeWidget
+        # InternalMove では外部ドラッグを受理できないため DragDrop
         assert sidebar.tree.dragDropMode() == \
-            QTreeWidget.DragDropMode.InternalMove
+            QTreeWidget.DragDropMode.DragDrop
 
 
 class TestFavoritesDropRegister:

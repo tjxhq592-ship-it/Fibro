@@ -6,7 +6,9 @@ QTreeWidget でグループ（フォルダ）によるネストを表現。
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QThreadPool, QTimer, Signal
+from dataclasses import dataclass
+
+from PySide6.QtCore import QPoint, QRect, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QInputDialog, QMenu, QMessageBox, QTreeWidget, QTreeWidgetItem,
@@ -20,6 +22,27 @@ from app.i18n import _
 from app.models.favorite import FavoriteStore
 
 _ID_ROLE = Qt.ItemDataRole.UserRole
+_IS_GROUP_ROLE = Qt.ItemDataRole.UserRole + 1
+
+#: 項目の上下このぶんはそれぞれ「直前へ」「直後へ」の帯（残り 50% が中央）。
+_DROP_BAND = 0.25
+#: 挿入位置を示すバーの太さ（px）。
+_BAR_THICKNESS = 2
+
+
+@dataclass
+class DropTarget:
+    """カーソル位置から決まったドロップ先。
+
+    Qt の `dropIndicatorPosition()` は使わない（`setDropIndicatorShown(False)`
+    と併用できないため。docs/investigation/qt_drop_indicator_20260731.md）。
+    """
+
+    parent_id: str   # 挿入先の親グループ id（トップ階層は ""）
+    index: int       # 兄弟内の挿入位置
+    mode: str        # "between" | "into"
+    rect: QRect      # インジケータ描画用
+    depth: int       # インジケータの左インデント算出用
 
 
 class _ReachJob(StoppableJob):
@@ -84,6 +107,101 @@ class _FavTree(QTreeWidget):
             return
         super().keyPressEvent(event)
 
+    # ---- ドロップ位置の判定（自前） ----
+    #
+    # Qt のバンド判定には乗らない。理由は 3 つ:
+    #   * 葉に「中に入れる」を作りたくない（Qt は OnItem を返してくる）
+    #   * `setDropIndicatorShown(False)` にすると Qt 側の位置が取れなくなる
+    #   * 純粋関数にしておけば描画なしで単体テストできる
+    # 詳細は docs/investigation/qt_drop_indicator_20260731.md。
+
+    @staticmethod
+    def _item_id(item: QTreeWidgetItem) -> str:
+        return item.data(0, _ID_ROLE) or ""
+
+    @staticmethod
+    def _item_is_group(item: QTreeWidgetItem) -> bool:
+        return bool(item.data(0, _IS_GROUP_ROLE))
+
+    @staticmethod
+    def _depth_of(item: QTreeWidgetItem) -> int:
+        depth = 0
+        parent = item.parent()
+        while parent is not None:
+            depth += 1
+            parent = parent.parent()
+        return depth
+
+    def _parent_id_of(self, item: QTreeWidgetItem) -> str:
+        parent = item.parent()
+        return "" if parent is None else self._item_id(parent)
+
+    def _index_of(self, item: QTreeWidgetItem) -> int:
+        parent = item.parent()
+        if parent is None:
+            return self.indexOfTopLevelItem(item)
+        return parent.indexOfChild(item)
+
+    def _bar_rect(self, y: int, depth: int) -> QRect:
+        """挿入位置を示す横バーの矩形。左端は挿入先の階層ぶん字下げする。"""
+        view = self.viewport()
+        left = self.indentation() * depth
+        top = max(0, min(y - _BAR_THICKNESS // 2,
+                         max(0, view.height() - _BAR_THICKNESS)))
+        return QRect(left, top, max(0, view.width() - left), _BAR_THICKNESS)
+
+    def _between(self, item: QTreeWidgetItem, rect: QRect, *,
+                 after: bool) -> DropTarget:
+        depth = self._depth_of(item)
+        y = rect.bottom() + 1 if after else rect.top()
+        return DropTarget(
+            parent_id=self._parent_id_of(item),
+            index=self._index_of(item) + (1 if after else 0),
+            mode="between", rect=self._bar_rect(y, depth), depth=depth)
+
+    def _append_to_top(self) -> DropTarget:
+        """項目の無い空白へのドロップ → トップ階層の末尾。"""
+        count = self.topLevelItemCount()
+        y = 0
+        if count:
+            last = self.topLevelItem(count - 1)
+            while last.isExpanded() and last.childCount():
+                last = last.child(last.childCount() - 1)
+            y = self.visualItemRect(last).bottom() + 1
+        return DropTarget(parent_id="", index=count, mode="between",
+                          rect=self._bar_rect(y, 0), depth=0)
+
+    def _drop_target(self, point: QPoint) -> DropTarget | None:
+        """カーソル位置からドロップ先を決める。"""
+        item = self.itemAt(point)
+        if item is None:
+            return self._append_to_top()
+        rect = self.visualItemRect(item)
+        height = rect.height()
+        if height <= 0:
+            return self._append_to_top()
+        rel = point.y() - rect.top()
+        band = height * _DROP_BAND
+        # 境界値（25% ちょうど）は中央側に含める。
+        if rel < band:
+            return self._between(item, rect, after=False)
+        if rel > height - band:
+            # 展開済みで子を持つグループの下端は、視覚上の次の行がその第 1 子。
+            # 「直後の兄弟」ではなく第 1 子位置に入れる（Explorer / VS Code と同じ）。
+            if (self._item_is_group(item) and item.isExpanded()
+                    and item.childCount() > 0):
+                depth = self._depth_of(item) + 1
+                return DropTarget(
+                    parent_id=self._item_id(item), index=0, mode="between",
+                    rect=self._bar_rect(rect.bottom() + 1, depth), depth=depth)
+            return self._between(item, rect, after=True)
+        if self._item_is_group(item):
+            return DropTarget(
+                parent_id=self._item_id(item), index=item.childCount(),
+                mode="into", rect=rect, depth=self._depth_of(item) + 1)
+        # 葉に「中に入れる」は無い。中点で直前 / 直後に振り分ける。
+        return self._between(item, rect, after=rel >= height / 2)
+
     def dragEnterEvent(self, event) -> None:  # noqa: N802 — Qt API
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
@@ -135,7 +253,14 @@ class FavoritesSidebar(QWidget):
 
         self.tree = _FavTree()
         self.tree.setHeaderHidden(True)
-        self.tree.setDragDropMode(QTreeWidget.DragDropMode.InternalMove)
+        # InternalMove は外部ドラッグを受理しないため DragDrop にする。
+        # 位置判定とインジケータ描画は自前で持つ（Qt の細線は出さない）。
+        # 根拠: docs/investigation/qt_drop_indicator_20260731.md
+        self.tree.setDragDropMode(QTreeWidget.DragDropMode.DragDrop)
+        # DragDrop 側は startDrag が Copy を提案してくるので明示的に打ち消す
+        self.tree.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.tree.setDropIndicatorShown(False)
+        self.tree.setAutoExpandDelay(700)  # 折りたたみグループへホバーで自動展開
         self.tree.setAcceptDrops(True)  # 外部（ファイル一覧）からの登録ドロップ用
         self.tree.dropped.connect(self._persist_structure)
         self.tree.urls_dropped.connect(self._on_urls_dropped)
@@ -177,6 +302,8 @@ class FavoritesSidebar(QWidget):
         icon_name = "folder_special" if fav.is_group else "star"
         item.setIcon(0, material_icon(icon_name))
         item.setData(0, _ID_ROLE, fav.id)
+        # ドロップ位置の判定でストアを引かずに済むよう、種別を item に持たせる
+        item.setData(0, _IS_GROUP_ROLE, fav.is_group)
         tooltip = fav.path or fav.label
         if fav.note:
             tooltip += f"\n{fav.note}"
