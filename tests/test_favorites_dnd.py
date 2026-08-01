@@ -479,6 +479,60 @@ class TestDropHintLifecycle:
         assert re.search(r"#[0-9a-fA-F]{3,8}\b", src) is None
 
 
+class TestAutoExpand:
+    """折りたたみグループへホバーすると自動で開く。
+
+    Qt 側（QTreeView::dragMoveEvent が仕掛けるタイマー）は使えない。
+    super().dragMoveEvent() を通していないうえ、Qt の展開は
+    state() == DraggingState を要求し、それは canDrop()（= モデルの
+    mimeTypes）が真のときしか立たないため、text/uri-list を持たない
+    QTreeWidget の外部ドロップでは元々発火しない。
+    """
+
+    def _collapsed_group(self, sidebar_factory, tmp_path):
+        def build(store):
+            group = store.add_group("G")
+            store.add("g1", str(tmp_path), parent_id=group.id)
+            group.expanded = False
+            store.save()
+        return sidebar_factory(build)
+
+    def test_hover_expands_collapsed_group(self, sidebar_factory, tmp_path,
+                                           qapp):
+        from PySide6.QtCore import QEventLoop, QTimer
+
+        sidebar = self._collapsed_group(sidebar_factory, tmp_path)
+        tree = sidebar.tree
+        tree.setAutoExpandDelay(30)  # テストを待たせないため短くする
+        item = tree.topLevelItem(0)
+        assert not item.isExpanded()
+        send_drag_move(tree, point_in(tree, item, 12))
+        assert tree._expand_timer.isActive()
+        loop = QEventLoop()
+        QTimer.singleShot(120, loop.quit)
+        loop.exec()
+        assert tree.topLevelItem(0).isExpanded()
+
+    def test_leaf_hover_does_not_arm_timer(self, sidebar_factory, tmp_path):
+        def build(store):
+            store.add("A", str(tmp_path))
+        sidebar = sidebar_factory(build)
+        tree = sidebar.tree
+        send_drag_move(tree, point_in(tree, tree.topLevelItem(0), 12))
+        assert not tree._expand_timer.isActive()
+
+    def test_leaving_cancels_pending_expand(self, sidebar_factory, tmp_path):
+        from PySide6.QtGui import QDragLeaveEvent
+
+        sidebar = self._collapsed_group(sidebar_factory, tmp_path)
+        tree = sidebar.tree
+        send_drag_move(tree, point_in(tree, tree.topLevelItem(0), 12))
+        assert tree._expand_timer.isActive()
+        tree.dragLeaveEvent(QDragLeaveEvent())
+        assert not tree._expand_timer.isActive()
+        assert tree._expand_item is None
+
+
 class TestDropRouting:
     """T-7 / T-10 と §6: 外部登録・内部移動が 1 本の経路を通る。"""
 
@@ -607,6 +661,23 @@ class TestDropRouting:
             item.setSelected(True)
         group = next(f for f in sidebar._store.favorites if f.is_group)
         assert sidebar.tree.dragged_ids() == [group.id]
+
+    def test_external_drop_onto_selected_group_is_accepted(
+            self, sidebar_factory, tmp_path):
+        """選択中のグループへ外部からドロップできる。
+
+        外部ドラッグでは「掴んでいるもの」は無いので、選択を
+        掴んでいるものと見なして弾いてはいけない。
+        """
+        def build(store):
+            store.add_group("G")
+        sidebar = sidebar_factory(build)
+        tree = sidebar.tree
+        item = tree.topLevelItem(0)
+        item.setSelected(True)  # 直前にクリックしていた状況
+        send_drag_move(tree, point_in(tree, item, 12))
+        assert tree._drop_hint is not None
+        assert tree._drop_hint.mode == "into"
 
     def test_no_super_dropevent_call(self):
         """Qt に item を動かさせない（構造の正はストア側だけ）。"""

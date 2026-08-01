@@ -109,6 +109,11 @@ class _FavTree(QTreeWidget):
         super().__init__(parent)
         #: 現在のドロップ先。None ならインジケータを描かない。
         self._drop_hint: DropTarget | None = None
+        #: ホバー中の折りたたみグループと、その自動展開タイマー。
+        self._expand_item: QTreeWidgetItem | None = None
+        self._expand_timer = QTimer(self)
+        self._expand_timer.setSingleShot(True)
+        self._expand_timer.timeout.connect(self._auto_expand)
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 — Qt API
         """F2 で選択中のお気に入りをリネーム（項目はインライン編集不可のため自前で処理）。"""
@@ -203,8 +208,6 @@ class _FavTree(QTreeWidget):
         （グループごと動くので、二重に動かすと壊れる）。
         """
         chosen = set(self.selectedItems())
-        if not chosen and self.currentItem() is not None:
-            chosen = {self.currentItem()}  # 選択が無いままドラッグされた場合
         ids: list[str] = []
         for item in self._display_order():
             if item not in chosen:
@@ -306,6 +309,57 @@ class _FavTree(QTreeWidget):
         """扱えるドラッグか（外部のパス、または自分自身からの内部移動）。"""
         return event.mimeData().hasUrls() or event.source() is self
 
+    def _is_internal(self, event) -> bool:
+        """自分自身からのドラッグ（= 既存項目の移動）か。
+
+        外部ドロップでは「掴んでいるもの」が無いので、
+        _is_internal を通さずに _is_inside_dragged を見てはいけない
+        （選択中の項目を掴んでいるものと誤認して、そのグループへ
+        落とせなくなる）。
+        """
+        return event.source() is self and not event.mimeData().hasUrls()
+
+    # ---- ホバーでの自動展開・端での自動スクロール ----
+    #
+    # どちらも本来は QTreeView / QAbstractItemView の dragMoveEvent が面倒を
+    # 見るが、そこを super に流していないので効かない。加えて Qt 側の自動展開は
+    # state() == DraggingState と実カーソル位置を要求し、DraggingState は
+    # canDrop()（= モデルの mimeTypes）が真のときしか入らないため、
+    # text/uri-list を持たない QTreeWidget の外部ドロップでは元々動かない。
+    # mimeTypes() を足すのは指示書で禁止されているので、受け取った
+    # event の座標だけで完結する形で自前で持つ。遅延は setAutoExpandDelay()
+    # の値をそのまま使う（設定の出どころを 1 つに保つ）。
+
+    def _arm_auto_expand(self, item: QTreeWidgetItem | None) -> None:
+        delay = self.autoExpandDelay()
+        collapsed_group = (item is not None and self._item_is_group(item)
+                           and not item.isExpanded() and item.childCount() > 0)
+        if delay < 0 or not collapsed_group:
+            self._expand_timer.stop()
+            self._expand_item = None
+            return
+        if item is self._expand_item and self._expand_timer.isActive():
+            return  # 同じ項目の上に居る間はタイマーを延長しない
+        self._expand_item = item
+        self._expand_timer.start(delay)
+
+    def _auto_expand(self) -> None:
+        item = self._expand_item
+        self._expand_item = None
+        if item is not None:
+            self.expandItem(item)
+            self._set_hint(None)  # 行が動くので、次の dragMove で引き直す
+
+    def _auto_scroll(self, point: QPoint) -> None:
+        """ビューポートの上下端に近づいたら送る（画面外の位置も指定できる）。"""
+        margin = self.autoScrollMargin()
+        height = self.viewport().height()
+        bar = self.verticalScrollBar()
+        if point.y() < margin:
+            bar.setValue(bar.value() - bar.singleStep())
+        elif point.y() > height - margin:
+            bar.setValue(bar.value() + bar.singleStep())
+
     def dragEnterEvent(self, event) -> None:  # noqa: N802 — Qt API
         if self._handles(event):
             event.acceptProposedAction()
@@ -313,38 +367,46 @@ class _FavTree(QTreeWidget):
             event.ignore()
 
     def dragMoveEvent(self, event) -> None:  # noqa: N802 — Qt API
+        point = event.position().toPoint()
         target = None
         if self._handles(event):
-            target = self._drop_target(event.position().toPoint())
-            if target is not None and self._is_inside_dragged(target):
+            target = self._drop_target(point)
+            if (target is not None and self._is_internal(event)
+                    and self._is_inside_dragged(target)):
                 target = None  # 掴んでいるものの中へは落とせない
         if target is None:
             event.ignore()
+            self._arm_auto_expand(None)
         else:
             event.acceptProposedAction()
+            self._arm_auto_expand(self.itemAt(point))
+            self._auto_scroll(point)
         self._set_hint(target)
 
     def dragLeaveEvent(self, event) -> None:  # noqa: N802 — Qt API
         # ドロップ時と離脱時の両方で消さないと、バーが描かれたまま残る
         self._set_hint(None)
+        self._arm_auto_expand(None)
         super().dragLeaveEvent(event)
 
     def dropEvent(self, event) -> None:  # noqa: N802 — Qt API
         target = (self._drop_target(event.position().toPoint())
                   if self._handles(event) else None)
         self._set_hint(None)
-        if target is None or self._is_inside_dragged(target):
+        self._arm_auto_expand(None)
+        internal = self._is_internal(event)
+        if target is None or (internal and self._is_inside_dragged(target)):
             event.ignore()
             return
-        mime = event.mimeData()
-        if mime.hasUrls():
-            paths = [u.toLocalFile() for u in mime.urls() if u.isLocalFile()]
-            if paths:
-                self.urls_dropped.emit(paths, target)
-        else:
+        if internal:
             ids = self.dragged_ids()
             if ids:
                 self.items_moved.emit(ids, target)
+        else:
+            paths = [u.toLocalFile() for u in event.mimeData().urls()
+                     if u.isLocalFile()]
+            if paths:
+                self.urls_dropped.emit(paths, target)
         event.acceptProposedAction()
 
 
